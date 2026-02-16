@@ -1,0 +1,42 @@
+# Node.js dependencies
+/node_modules/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Operating system files
+.DS_Store
+Thumbs.db
+
+# Build output
+/dist/
+/build/
+/.esbuild/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# IDE and editor settings
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Dependency directories
+/package-lock.json
+/yarn.lock
+
+# Test and coverage files
+/coverage/
+
+# Jest or other testing frameworks
+/jest-cache/
+
+# MacOS-specific
+*.DS_Store
+
+# Linux-specific
+*.swp

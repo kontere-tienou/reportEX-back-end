@@ -1,0 +1,156 @@
+const cron = require("node-cron");
+const db = require("../src/config/database");
+const emailService = require("../src/services/emailService");
+const notificationService = require("../src/services/notificationService");
+const logger = require("../src/config/logger");
+
+/**
+ * Cron job pour envoyer des rappels mensuels
+ * Exécuté le 28 de chaque mois à 9h (heure de Bamako)
+ */
+
+const monthlyReminderJob = cron.schedule(
+  "0 9 28 * *",
+  async () => {
+    try {
+      logger.info("⏰ Starting monthly reminder job...");
+
+      // Récupérer les utilisateurs qui n'ont pas soumis de rapport ce mois
+      const result = await db.query(`
+      SELECT 
+        u.id, 
+        u.email, 
+        u.full_name, 
+        d.name as department_name
+      FROM users u
+      JOIN departments d ON u.department_id = d.id
+      WHERE u.role = 'responsable'
+        AND u.is_active = true
+        AND NOT EXISTS (
+          SELECT 1 
+          FROM reports r
+          JOIN report_templates rt ON r.template_id = rt.id
+          WHERE r.user_id = u.id
+            AND rt.frequency = 'mensuel'
+            AND r.created_at >= DATE_TRUNC('month', NOW())
+            AND r.status IN ('soumis', 'valide')
+        )
+    `);
+
+      const users = result.rows;
+
+      if (users.length === 0) {
+        logger.info(
+          "✅ No users need monthly reminders - all reports submitted!",
+        );
+        return;
+      }
+
+      logger.info(`📧 Sending monthly reminders to ${users.length} users...`);
+
+      // Envoyer les emails
+      const emailResults = await emailService.sendBulkReminders(
+        users,
+        "mensuel",
+      );
+
+      // Créer des notifications in-app
+      for (const user of users) {
+        await notificationService.notifyReminder(
+          user.id,
+          user.department_name,
+          "mensuel",
+        );
+      }
+
+      // Logger les résultats
+      const successCount = emailResults.filter((r) => r.success).length;
+      const failureCount = emailResults.filter((r) => !r.success).length;
+
+      logger.info(`📊 Monthly reminder job completed:`);
+      logger.info(`   - Total users: ${users.length}`);
+      logger.info(`   - Emails sent: ${successCount}`);
+      logger.info(`   - Failures: ${failureCount}`);
+
+      if (failureCount > 0) {
+        logger.warn(`⚠️ ${failureCount} emails failed to send`);
+      }
+    } catch (error) {
+      logger.error("❌ Monthly reminder job failed:", error);
+    }
+  },
+  {
+    timezone: "Africa/Bamako",
+    scheduled: false,
+  },
+);
+
+/**
+ * Démarrer le cron job
+ */
+function startMonthlyReminderJob() {
+  monthlyReminderJob.start();
+  logger.info(
+    "✅ Monthly reminder cron job started (28th of each month at 9:00 AM)",
+  );
+}
+
+/**
+ * Arrêter le cron job
+ */
+function stopMonthlyReminderJob() {
+  monthlyReminderJob.stop();
+  logger.info("⏹️ Monthly reminder cron job stopped");
+}
+
+/**
+ * Exécuter manuellement (pour tests)
+ */
+async function runMonthlyReminderNow() {
+  logger.info("🚀 Running monthly reminder job manually...");
+
+  try {
+    const result = await db.query(`
+      SELECT 
+        u.id, 
+        u.email, 
+        u.full_name, 
+        d.name as department_name
+      FROM users u
+      JOIN departments d ON u.department_id = d.id
+      WHERE u.role = 'responsable'
+        AND u.is_active = true
+      LIMIT 5
+    `);
+
+    const users = result.rows;
+
+    if (users.length === 0) {
+      logger.info("No users found for testing");
+      return;
+    }
+
+    logger.info(`Sending test reminders to ${users.length} users...`);
+
+    const emailResults = await emailService.sendBulkReminders(users, "mensuel");
+
+    for (const user of users) {
+      await notificationService.notifyReminder(
+        user.id,
+        user.department_name,
+        "mensuel",
+      );
+    }
+
+    logger.info("✅ Manual monthly reminder completed!");
+  } catch (error) {
+    logger.error("❌ Manual monthly reminder failed:", error);
+  }
+}
+
+module.exports = {
+  monthlyReminderJob,
+  startMonthlyReminderJob,
+  stopMonthlyReminderJob,
+  runMonthlyReminderNow,
+};
