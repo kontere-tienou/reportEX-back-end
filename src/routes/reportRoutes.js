@@ -16,6 +16,18 @@ router.get('/:id', reportController.getReport);
 router.put('/:id', reportController.updateReport);
 router.post('/:id/submit', reportController.submitReport);
 
+router.delete("/:id", deleteReport);
+
+router.post("/:id/submit", submitReport);
+
+router.post(
+  "/:id/validate",
+  authorizeRoles("direction", "admin"),
+  validateReport,
+);
+
+router.get("/stats/department", getDepartmentStats);
+
 // Validation (seulement pour validateurs et admins)
 router.post('/:id/validate',
     authorizeRoles('validateur', 'admin'),

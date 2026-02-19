@@ -12,8 +12,7 @@ const io = socketIo(server);
 // Middleware
 app.use(
   cors({
-    //origin: process.env.FRONTEND_URL || 'http://localhost:5174',
-    origin: process.env.FRONTEND_URL || "https://report-ex.vercel.app",
+    origin: process.env.FRONTEND_URL || "http://localhost:5173",
     credentials: true,
   }),
 );
