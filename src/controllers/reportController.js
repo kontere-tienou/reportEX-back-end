@@ -1,5 +1,6 @@
 const db = require("../config/database");
 const { getReportDetails } = require("../service/reportService");
+const reportAccessRequestService = require("../service/reportAccessRequestService");
 
 /**
  * ==========================================
