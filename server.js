@@ -10,7 +10,7 @@ const server = http.createServer(app);
 // Socket.IO instance
 const io = new Server(server, {
   cors: {
-    origin: process.env.FRONTEND_URL || "http://localhost:5173",
+    origin: process.env.FRONTEND_URL || "http://localhost:5174",
     credentials: true,
   },
 });
@@ -18,7 +18,7 @@ const io = new Server(server, {
 // Middleware
 app.use(
   cors({
-    origin: process.env.FRONTEND_URL || "http://localhost:5173",
+    origin: process.env.FRONTEND_URL || "http://localhost:5174",
     credentials: true,
   }),
 );
@@ -56,6 +56,7 @@ const notificationRoutes = require("./src/routes/notificationRoutes");
 const managementRoutes = require("./src/routes/namagmentRoutes");
 const itRoutes = require("./src/routes/itRoute");
 const reportAccessRequestRoutes = require("./src/routes/reportAccessRequestRoutes");
+const reportCommentRoutes = require("./src/routes/reportCommentRoutes");
 
 app.use("/api/auth", authRoutes);
 app.use("/api/reports", reportRoutes);
@@ -64,6 +65,8 @@ app.use("/api/notifications", notificationRoutes);
 app.use("/api/management", managementRoutes);
 app.use("/api/it", itRoutes);
 app.use("/api/report-access", reportAccessRequestRoutes);
+
+app.use("/api/reports", reportCommentRoutes);
 
 app.get("/api/health", (req, res) => {
   res.json({

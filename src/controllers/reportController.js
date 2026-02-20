@@ -1,4 +1,5 @@
 const db = require("../config/database");
+const { getReportDetails } = require("../service/reportService");
 
 /**
  * ==========================================
@@ -7,82 +8,152 @@ const db = require("../config/database");
  */
 
 const reportController = {
-  /* ===============================
-     1️⃣ GET TEMPLATES BY DEPARTMENT
-  =============================== */
-  async getTemplates(req, res) {
-    try {
-      const { departmentId } = req.params;
-
-      const result = await db.query(
-        `SELECT id, name, frequency, fields
-         FROM report_templates
-         WHERE department_id = $1 AND is_active = true
-         ORDER BY created_at DESC`,
-        [departmentId],
-      );
-
-      return res.json({
-        success: true,
-        templates: result.rows,
-      });
-    } catch (error) {
-      console.error(error);
-      return res
-        .status(500)
-        .json({ success: false, message: "Erreur récupération templates" });
-    }
-  },
-
-  /* ===============================
-     2️⃣ CREATE REPORT
-  =============================== */
+  /*  CREATE REPORT*/
   async createReport(req, res) {
     try {
-      const { template_id, period_start, period_end, data } = req.body;
+      const { period_start, period_end, data, visibility } = req.body;
 
-      const templateCheck = await db.query(
-        `SELECT * FROM report_templates WHERE id = $1 AND is_active = true`,
-        [template_id],
-      );
+      /* VALIDATIONS BASIQUES */
 
-      if (templateCheck.rowCount === 0) {
-        return res
-          .status(404)
-          .json({ success: false, message: "Template non trouvé" });
+      if (!period_start || !period_end) {
+        return res.status(400).json({
+          success: false,
+          message: "Les dates de période sont obligatoires",
+        });
       }
 
-      const report = await db.query(
-        `INSERT INTO reports
-         (template_id, user_id, department_id, period_start, period_end, data, status)
-         VALUES ($1,$2,$3,$4,$5,$6,'brouillon')
-         RETURNING *`,
+      if (!data || typeof data !== "object") {
+        return res.status(400).json({
+          success: false,
+          message: "Les données du rapport sont invalides",
+        });
+      }
+
+      // Validation période
+      if (new Date(period_start) > new Date(period_end)) {
+        return res.status(400).json({
+          success: false,
+          message: "La date de début doit être avant la date de fin",
+        });
+      }
+
+      /* VERIFIER DOUBLON PERIODE */
+
+      const existing = await db.query(
+        `
+        SELECT id FROM reports
+        WHERE department_id = $1
+        AND period_start = $2
+        AND period_end = $3
+        AND status != 'rejete'
+        `,
+        [req.user.department_id, period_start, period_end],
+      );
+
+      if (existing.rowCount > 0) {
+        return res.status(409).json({
+          success: false,
+          message: "Un rapport existe déjà pour cette période",
+        });
+      }
+
+      /* INSERT REPORT*/
+
+      const result = await db.query(
+        `
+        INSERT INTO reports
+        (user_id, department_id, period_start, period_end, data, visibility, status, created_at, updated_at)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
+        RETURNING *;
+        `,
         [
-          template_id,
           req.user.id,
           req.user.department_id,
           period_start,
           period_end,
-          data,
+          JSON.stringify(data),
+          visibility || "private",
+          "brouillon",
         ],
       );
 
+      const report = result.rows[0];
+
+      /* AUDIT LOG*/
+
+      await db.query(
+        `
+        INSERT INTO audit_logs (user_id, action, entity_type, entity_id, details)
+        VALUES ($1,$2,$3,$4,$5)
+        `,
+        [
+          req.user.id,
+          "CREATE_REPORT",
+          "report",
+          report.id,
+          JSON.stringify({
+            period_start,
+            period_end,
+            visibility,
+          }),
+        ],
+      );
+
+      /* NOTIFICATION DIRECTION*/
+
+      const io = req.app.get("io");
+
+      const directionUsers = await db.query(
+        `
+        SELECT id FROM users
+        WHERE role IN ('direction','admin')
+        AND is_active = true
+        `,
+      );
+
+      for (const dir of directionUsers.rows) {
+        await db.query(
+          `
+          INSERT INTO notifications (user_id, type, title, message, link)
+          VALUES ($1,$2,$3,$4,$5)
+          `,
+          [
+            dir.id,
+            "report_created",
+            "Nouveau rapport créé",
+            `Un nouveau rapport a été créé par ${req.user.full_name}`,
+            `/reports/${report.id}`,
+          ],
+        );
+
+        // envoi de Socket realtime
+        if (io) {
+          io.to(`user:${dir.id}`).emit("notification", {
+            type: "report_created",
+            title: "Nouveau rapport",
+            message: `Rapport créé par ${req.user.full_name}`,
+            link: `/reports/${report.id}`,
+          });
+        }
+      }
+
+      /* RESPONSE*/
+
       return res.status(201).json({
         success: true,
-        message: "Rapport créé",
-        report: report.rows[0],
+        message: "Rapport créé avec succès",
+        report,
       });
     } catch (error) {
-      console.error(error);
-      return res
-        .status(500)
-        .json({ success: false, message: "Erreur création rapport" });
+      console.error("Erreur création rapport:", error);
+
+      return res.status(500).json({
+        success: false,
+        message: "Erreur interne lors de la création du rapport",
+      });
     }
   },
-
-  /* ===============================
-     3️⃣ UPDATE REPORT (Draft only)
-  =============================== */
+  /* UPDATE REPORT (Draft only)*/
   async updateReport(req, res) {
     try {
       const { id } = req.params;
@@ -103,12 +174,10 @@ const reportController = {
         check.rows[0].status !== "brouillon" &&
         check.rows[0].status !== "rejete"
       ) {
-        return res
-          .status(400)
-          .json({
-            success: false,
-            message: "Impossible de modifier ce rapport",
-          });
+        return res.status(400).json({
+          success: false,
+          message: "Impossible de modifier ce rapport",
+        });
       }
 
       const updated = await db.query(
@@ -129,10 +198,7 @@ const reportController = {
       return res.status(500).json({ success: false });
     }
   },
-
-  /* ===============================
-     4️⃣ SUBMIT REPORT
-  =============================== */
+  /* SUBMIT REPORT */
   async submitReport(req, res) {
     try {
       const { id } = req.params;
@@ -165,10 +231,7 @@ const reportController = {
       return res.status(500).json({ success: false });
     }
   },
-
-  /* ===============================
-     5️⃣ VALIDATE REPORT (Direction/Admin)
-  =============================== */
+  /* VALIDATE REPORT (Direction/Admin)*/
   async validateReport(req, res) {
     try {
       const { id } = req.params;
@@ -214,18 +277,37 @@ const reportController = {
       return res.status(500).json({ success: false });
     }
   },
+  async getAllReports(req, res) {
+    try {
+      const result = await db.query(`
+        SELECT r.*, u.full_name, d.name as department_name
+        FROM reports r
+        JOIN users u ON r.user_id = u.id
+        JOIN departments d ON r.department_id = d.id
+        ORDER BY r.created_at DESC
+      `);
 
-  /* ===============================
-     6️⃣ GET MY REPORTS
-  =============================== */
+      return res.json({
+        success: true,
+        reports: result.rows,
+      });
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ success: false });
+    }
+  },
+  /*GET MY REPORTS*/
   async getMyReports(req, res) {
     try {
       const { status } = req.query;
 
       let query = `
-        SELECT r.*, t.name AS template_name
+        SELECT r.*, 
+               u.full_name AS author_name,
+               d.name AS department_name
         FROM reports r
-        JOIN report_templates t ON r.template_id = t.id
+        JOIN users u ON r.user_id = u.id
+        JOIN departments d ON r.department_id = d.id
         WHERE r.user_id = $1
       `;
 
@@ -240,63 +322,62 @@ const reportController = {
 
       const result = await db.query(query, params);
 
-      return res.json({ success: true, reports: result.rows });
+      return res.json({
+        success: true,
+        reports: result.rows,
+      });
     } catch (error) {
       console.error(error);
       return res.status(500).json({ success: false });
     }
   },
-
-  /* ===============================
-     7️⃣ GET REPORT DETAILS
-  =============================== */
-  async getReport(req, res) {
+  /* GET REPORT DETAILS */
+  async getReportDetails(req, res) {
     try {
       const { id } = req.params;
 
       const result = await db.query(
-        `SELECT r.*, t.name AS template_name,
-                u.full_name AS author_name,
-                d.name AS department_name
-         FROM reports r
-         JOIN report_templates t ON r.template_id = t.id
-         JOIN users u ON r.user_id = u.id
-         JOIN departments d ON r.department_id = d.id
-         WHERE r.id = $1`,
+        `
+        SELECT r.*,
+               u.full_name AS author_name,
+               d.name AS department_name
+        FROM reports r
+        JOIN users u ON r.user_id = u.id
+        JOIN departments d ON r.department_id = d.id
+        WHERE r.id = $1
+        `,
         [id],
       );
 
       if (result.rowCount === 0) {
         return res.status(404).json({ success: false });
       }
-      
-      if (report.department_id !== req.user.department_id) {
-        const hasAccess = await reportAccessRequestModel.hasApprovedAccess(
-          report.id,
-          req.user.department_id,
-        );
 
-        if (
-          !hasAccess &&
-          req.user.role !== "direction" &&
-          req.user.role !== "admin"
-        ) {
-          return res
-            .status(403)
-            .json({ success: false, message: "Accès refusé" });
-        }
-      }     
+      const report = result.rows[0];
 
-      return res.json({ success: true, report: result.rows[0] });
+      // 🔐 Vérification accès
+      const canRead = await reportAccessRequestService.canReadReport({
+        reportId: parseInt(id, 10),
+        user: req.user,
+      });
+
+      if (!canRead) {
+        return res.status(403).json({
+          success: false,
+          message: "Accès refusé",
+        });
+      }
+
+      return res.json({
+        success: true,
+        report,
+      });
     } catch (error) {
       console.error(error);
       return res.status(500).json({ success: false });
     }
   },
-
-  /* ===============================
-     8️⃣ DELETE REPORT (Draft Only)
-  =============================== */
+  /* DELETE REPORT (Draft Only)*/
   async deleteReport(req, res) {
     try {
       const { id } = req.params;
@@ -322,10 +403,7 @@ const reportController = {
       return res.status(500).json({ success: false });
     }
   },
-
-  /* ===============================
-     9️⃣ DEPARTMENT STATS
-  =============================== */
+  /* DEPARTMENT STATS*/
   async getDepartmentStats(req, res) {
     try {
       const { departmentId } = req.params;

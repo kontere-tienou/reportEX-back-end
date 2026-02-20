@@ -1,40 +1,48 @@
-const express = require('express');
+const express = require("express");
 const router = express.Router();
-const reportController = require('../controllers/reportController');
-const { authMiddleware, authorizeRoles } = require('../middleware/auth');
+const reportController = require("../controllers/reportController");
+const { authMiddleware, authorizeRoles } = require("../middleware/auth");
 
-// Toutes les routes nécessitent l'authentification
+// 🔐 Toutes les routes protégées
 router.use(authMiddleware);
 
-// Templates
-router.get('/templates/:departmentId', reportController.getTemplates);
+/*RAPPORTS*/
 
-// CRUD rapports
-router.post('/', reportController.createReport);
-router.get('/my-reports', reportController.getMyReports);
-router.get('/:id', reportController.getReport);
-router.put('/:id', reportController.updateReport);
-router.post('/:id/submit', reportController.submitReport);
+// 🔥 IMPORTANT → pour /api/reports
+router.get(
+  "/",
+  authorizeRoles("direction", "admin"),
+  reportController.getAllReports,
+);
 
-router.delete("/:id", deleteReport);
+router.get("/my-reports", reportController.getMyReports);
 
-router.post("/:id/submit", submitReport);
+router.get("/:id", reportController.getReportDetails);
 
+router.post("/", reportController.createReport);
+
+router.put("/:id", reportController.updateReport);
+
+router.delete("/:id", reportController.deleteReport);
+
+router.post("/:id/submit", reportController.submitReport);
+
+// Validation (direction + admin seulement)
 router.post(
   "/:id/validate",
   authorizeRoles("direction", "admin"),
-  validateReport,
+  reportController.validateReport,
 );
 
-router.get("/stats/department", getDepartmentStats);
+/* ==============================
+   📊 STATISTIQUES
+============================== */
 
-// Validation (seulement pour validateurs et admins)
-router.post('/:id/validate',
-    authorizeRoles('validateur', 'admin'),
-    reportController.validateReport
+router.get(
+  "/stats/:departmentId",
+  authorizeRoles("direction", "admin"),
+  reportController.getDepartmentStats,
 );
 
-// Statistiques
-router.get('/stats/:departmentId', reportController.getDepartmentStats);
 
 module.exports = router;
