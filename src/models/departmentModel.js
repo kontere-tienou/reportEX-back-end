@@ -12,7 +12,20 @@ const Department = {
     );
     return result.rows[0];
   },
+ async count(filters = {}) {
+    const { is_active } = filters;
+    const params = [];
 
+    let query = "SELECT COUNT(*) FROM departments WHERE 1=1";
+
+    if (is_active !== undefined) {
+      query += " AND is_active = $1";
+      params.push(is_active);
+    }
+
+    const result = await db.query(query, params);
+    return parseInt(result.rows[0].count);
+  },
   // Get all active departments
   async getAll() {
     const result = await db.query(
@@ -28,7 +41,13 @@ const Department = {
     ]);
     return result.rows[0];
   },
+async findByCode(code) {
+    const result = await db.query("SELECT * FROM departments WHERE code = $1", [
+      code,
+    ]);
 
+    return result.rows[0];
+  },
   // Update a department by ID
   async update(id, { name, code, description }) {
     const result = await db.query(
