@@ -1,245 +1,292 @@
-const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
-const db = require('../config/database');
+const { User } = require("../models");
+const { comparePassword } = require("../utils/password");
+const { generateTokenPair } = require("../utils/jwt");
+const {
+  successResponse,
+  errorResponse,
+  unauthorizedResponse,
+} = require("../utils/responseFormatter");
+const { HTTP_STATUS } = require("../config/constants");
+const AuditLog = require("../models/AuditLog");
+
+/**
+ * ==========================================
+ * AUTH CONTROLLER
+ * ==========================================
+ */
 
 const authController = {
-  // Connexion
+  /**
+   * Login user
+   * POST /api/auth/login
+   */
   async login(req, res) {
     try {
-      const { username, password } = req.body;
+      const { email, password } = req.body;
 
       // Validation
-      if (!username || !password) {
-        return res.status(400).json({
-          success: false,
-          message: "Nom d'utilisateur et mot de passe requis",
-        });
+      if (!email || !password) {
+        return errorResponse(
+          res,
+          "Email et mot de passe requis",
+          HTTP_STATUS.BAD_REQUEST,
+        );
       }
 
-      // Rechercher l'utilisateur
-      const result = await db.query(
-        `SELECT u.*, d.name as department_name, d.code as department_code
-         FROM users u
-         LEFT JOIN departments d ON u.department_id = d.id
-         WHERE u.username = $1 AND u.is_active = true`,
-        [username],
-      );
+      // Find user
+      const user = await User.findByEmail(email);
 
-      if (result.rows.length === 0) {
-        return res.status(401).json({
-          success: false,
-          message: "Nom d'utilisateur  incorrects",
-        });
+      if (!user) {
+        return unauthorizedResponse(res, "Email ou mot de passe incorrect");
       }
 
-      const user = result.rows[0];
+      // Check if active
+      if (!user.is_active) {
+        return errorResponse(
+          res,
+          "Compte désactivé. Contactez l'administrateur",
+          HTTP_STATUS.FORBIDDEN,
+        );
+      }
 
-      // Vérifier le mot de passe
-      const isMatch = await bcrypt.compare(password, user.password_hash);
+      // Verify password
+      const isMatch = await comparePassword(password, user.password);
 
       if (!isMatch) {
-        return res.status(401).json({
-          success: false,
-          message: "Mot de passe incorrect",
-        });
+        return unauthorizedResponse(res, "Email ou mot de passe incorrect");
       }
 
-      // Générer le token JWT
-      const token = jwt.sign(
+      // Generate tokens
+      const { accessToken, refreshToken } = generateTokenPair(user.id, {
+        role: user.role,
+        department_id: user.department_id,
+      });
+
+      // Update last login
+      await User.updateLastLogin(user.id);
+
+      // Audit log
+      await AuditLog.create({
+        user_id: user.id,
+        action: "LOGIN",
+        entity_type: "user",
+        entity_id: user.id,
+        details: { email },
+        ip_address: req.ip,
+        user_agent: req.get("user-agent"),
+      });
+
+      // Remove password from response
+      delete user.password;
+
+      return successResponse(
+        res,
         {
-          id: user.id,
-          username: user.username,
-          role: user.role,
-          department_id: user.department_id,
-        },
-        process.env.JWT_SECRET,
-        console.log("JWT_SECRET:", process.env.JWT_SECRET),
-        { expiresIn: process.env.JWT_EXPIRE },
-      );
-
-      // Log de connexion
-      await db.query(
-        `INSERT INTO audit_logs (user_id, action, entity_type, ip_address)
-         VALUES ($1, $2, $3, $4)`,
-        [user.id, "LOGIN", "user", req.ip],
-      );
-
-      res.json({
-        success: true,
-        message: "Connexion réussie",
-        token,
-        user: {
-          id: user.id,
-          username: user.username,
-          email: user.email,
-          full_name: user.full_name,
-          role: user.role,
-          department: {
-            id: user.department_id,
-            name: user.department_name,
-            code: user.department_code,
+          user: {
+            id: user.id,
+            email: user.email,
+            full_name: user.full_name,
+            role: user.role,
+            role_name: user.role_name,
+            department: {
+              id: user.department_id,
+              name: user.department_name,
+              code: user.department_code,
+            },
+          },
+          tokens: {
+            accessToken,
+            refreshToken,
           },
         },
-      });
+        "Connexion réussie",
+        HTTP_STATUS.OK,
+      );
     } catch (error) {
-      console.error("Erreur login:", error);
-      res.status(500).json({
-        success: false,
-        message: "Erreur lors de la connexion",
-      });
+      console.error("Login error:", error);
+      return errorResponse(
+        res,
+        "Erreur lors de la connexion",
+        HTTP_STATUS.INTERNAL_ERROR,
+      );
     }
   },
-  // Récupérer le profil utilisateur
+
+  /**
+   * Get current user profile
+   * GET /api/auth/profile
+   */
   async getProfile(req, res) {
     try {
-      const result = await db.query(
-        `SELECT u.id, u.username, u.email, u.full_name, u.role,
-                d.id as department_id, d.name as department_name, d.code as department_code
-         FROM users u
-         LEFT JOIN departments d ON u.department_id = d.id
-         WHERE u.id = $1`,
-        [req.user.id],
-      );
+      const user = await User.findById(req.userId);
 
-      if (result.rows.length === 0) {
-        return res.status(404).json({
-          success: false,
-          message: "Utilisateur non trouvé",
-        });
+      if (!user) {
+        return errorResponse(
+          res,
+          "Utilisateur non trouvé",
+          HTTP_STATUS.NOT_FOUND,
+        );
       }
 
-      const user = result.rows[0];
+      // Remove password
+      delete user.password;
 
-      res.json({
-        success: true,
-        user: {
-          id: user.id,
-          username: user.username,
-          email: user.email,
-          full_name: user.full_name,
-          role: user.role,
-          department: {
-            id: user.department_id,
-            name: user.department_name,
-            code: user.department_code,
-          },
-        },
-      });
+      return successResponse(res, { user }, "Profil récupéré");
     } catch (error) {
-      console.error("Erreur profil:", error);
-      res.status(500).json({
-        success: false,
-        message: "Erreur lors de la récupération du profil",
-      });
+      console.error("Get profile error:", error);
+      return errorResponse(
+        res,
+        "Erreur lors de la récupération du profil",
+        HTTP_STATUS.INTERNAL_ERROR,
+      );
     }
   },
-  // Changer le mot de passe
+
+  /**
+   * Change password
+   * POST /api/auth/change-password
+   */
   async changePassword(req, res) {
     try {
       const { currentPassword, newPassword } = req.body;
 
       if (!currentPassword || !newPassword) {
-        return res.status(400).json({
-          success: false,
-          message: "Tous les champs sont requis",
-        });
+        return errorResponse(
+          res,
+          "Tous les champs sont requis",
+          HTTP_STATUS.BAD_REQUEST,
+        );
       }
 
-      // Vérifier l'ancien mot de passe
-      const result = await db.query(
-        "SELECT password_hash FROM users WHERE id = $1",
-        [req.user.id],
-      );
+      // Get user with password
+      const user = await User.findByEmail(req.user.email);
 
-      const isMatch = await bcrypt.compare(
-        currentPassword,
-        result.rows[0].password_hash,
-      );
+      // Verify current password
+      const isMatch = await comparePassword(currentPassword, user.password);
 
       if (!isMatch) {
-        return res.status(401).json({
-          success: false,
-          message: "Mot de passe actuel incorrect",
-        });
+        return unauthorizedResponse(res, "Mot de passe actuel incorrect");
       }
 
-      // Hacher le nouveau mot de passe
-      const newPasswordHash = await bcrypt.hash(newPassword, 10);
+      // Update password
+      await User.updatePassword(req.userId, newPassword);
 
-      // Mettre à jour
-      await db.query(
-        "UPDATE users SET password_hash = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2",
-        [newPasswordHash, req.user.id],
-      );
-
-      res.json({
-        success: true,
-        message: "Mot de passe modifié avec succès",
+      // Audit log
+      await AuditLog.create({
+        user_id: req.userId,
+        action: "UPDATE",
+        entity_type: "user",
+        entity_id: req.userId,
+        details: { action: "password_changed" },
+        ip_address: req.ip,
+        user_agent: req.get("user-agent"),
       });
+
+      return successResponse(res, null, "Mot de passe modifié avec succès");
     } catch (error) {
-      console.error("Erreur changement mot de passe:", error);
-      res.status(500).json({
-        success: false,
-        message: "Erreur lors du changement de mot de passe",
-      });
+      console.error("Change password error:", error);
+      return errorResponse(
+        res,
+        "Erreur lors du changement de mot de passe",
+        HTTP_STATUS.INTERNAL_ERROR,
+      );
     }
   },
-  // user creation (for admin use)
+
+  /**
+   * Register new user (Admin only)
+   * POST /api/auth/register
+   */
   async registerUser(req, res) {
-    const { username, email, fullName, departmentId, role, password } =
-      req.body;
-
-    // Validate required fields
-    if (
-      !username ||
-      !email ||
-      !fullName ||
-      !departmentId ||
-      !role ||
-      !password
-    ) {
-      return res
-        .status(400)
-        .json({ success: false, message: "All fields are required." });
-    }
-
     try {
-      // Check if username or email already exists
-      const userExists = await db.query(
-        "SELECT * FROM users WHERE username = $1 OR email = $2",
-        [username, email],
-      );
-      if (userExists.rows.length > 0) {
-        return res
-          .status(409)
-          .json({
-            success: false,
-            message: "Username or Email already exists.",
-          });
+      const { email, password, full_name, role, department_id, phone } =
+        req.body;
+
+      // Validation
+      if (!email || !password || !full_name || !role || !department_id) {
+        return errorResponse(
+          res,
+          "Tous les champs requis doivent être remplis",
+          HTTP_STATUS.BAD_REQUEST,
+        );
       }
 
-      // Hash password
-      const hashedPassword = await bcrypt.hash(password, 10);
+      // Check if user exists
+      const existing = await User.findByEmail(email);
+
+      if (existing) {
+        return errorResponse(
+          res,
+          "Un utilisateur avec cet email existe déjà",
+          HTTP_STATUS.CONFLICT,
+        );
+      }
 
       // Create user
-      const newUser = await db.query(
-        "INSERT INTO users (username, email, full_name, department_id, role, password_hash) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *",
-        [username, email, fullName, departmentId, role, hashedPassword],
-      );
+      const newUser = await User.create({
+        email,
+        password,
+        full_name,
+        role,
+        department_id,
+        phone,
+      });
 
-      // Return success response
-      res
-        .status(201)
-        .json({
-          success: true,
-          message: "User registered successfully",
-          user: newUser.rows[0],
-        });
+      // Audit log
+      await AuditLog.create({
+        user_id: req.userId,
+        action: "CREATE",
+        entity_type: "user",
+        entity_id: newUser.id,
+        details: { email, role, department_id },
+        ip_address: req.ip,
+        user_agent: req.get("user-agent"),
+      });
+
+      // Remove password from response
+      delete newUser.password;
+
+      return successResponse(
+        res,
+        { user: newUser },
+        "Utilisateur créé avec succès",
+        HTTP_STATUS.CREATED,
+      );
     } catch (error) {
-      console.error(error);
-      res
-        .status(500)
-        .json({ success: false, message: "Error registering user" });
+      console.error("Register error:", error);
+      return errorResponse(
+        res,
+        "Erreur lors de la création de l'utilisateur",
+        HTTP_STATUS.INTERNAL_ERROR,
+      );
+    }
+  },
+
+  /**
+   * Logout user
+   * POST /api/auth/logout
+   */
+  async logout(req, res) {
+    try {
+      // Audit log
+      await AuditLog.create({
+        user_id: req.userId,
+        action: "LOGOUT",
+        entity_type: "user",
+        entity_id: req.userId,
+        details: {},
+        ip_address: req.ip,
+        user_agent: req.get("user-agent"),
+      });
+
+      return successResponse(res, null, "Déconnexion réussie");
+    } catch (error) {
+      console.error("Logout error:", error);
+      return errorResponse(
+        res,
+        "Erreur lors de la déconnexion",
+        HTTP_STATUS.INTERNAL_ERROR,
+      );
     }
   },
 };
