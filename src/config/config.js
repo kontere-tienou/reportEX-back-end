@@ -83,7 +83,7 @@ module.exports = {
   // Company
   company: {
     name: process.env.COMPANY_NAME || "BATEX-CI",
-    address: process.env.COMPANY_ADDRESS || "Abidjan, Côte d'Ivoire",
+    address: process.env.COMPANY_ADDRESS || "Bamako, Mali",
     phone: process.env.COMPANY_PHONE,
     email: process.env.COMPANY_EMAIL || "contact@batex-ci.com",
   },

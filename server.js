@@ -7,13 +7,13 @@ const compression = require("compression");
 const cookieParser = require("cookie-parser");
 require("dotenv").config();
 
-const config = require("./config/config");
-const { pool, closePool } = require("./config/database");
-const logger = require("./utils/logger");
-const configureRoutes = require("./routes");
-const { requestLogger, requestId } = require("./middleware/requestLogger");
-const { generalLimiter } = require("./middleware/rateLimiter");
-const { notFound, errorHandler } = require("./middleware/errorHandler");
+const config = require("./src/config/config");
+const { pool, closePool } = require("./src/config/database");
+const logger = require("./src/utils/logger");
+const configureRoutes = require("./src/routes");
+const { requestLogger, requestId } = require("./src/middleware/requestLogger");
+const { generalLimiter } = require("./src/middleware/rateLimiter");
+const { notFound, errorHandler } = require("./src/middleware/errorHandler");
 
 /**
  * ==========================================
