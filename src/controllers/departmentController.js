@@ -1,335 +1,243 @@
-const db = require("../config/database");
+const { Department, AuditLog } = require("../models");
+const {
+  successResponse,
+  errorResponse,
+  createdResponse,
+  notFoundResponse,
+} = require("../utils/responseFormatter");
+const { HTTP_STATUS } = require("../config/constants");
+
+/**
+ * ==========================================
+ * DEPARTMENT CONTROLLER
+ * ==========================================
+ */
 
 const departmentController = {
-  // Créer un nouveau département
-  async createDepartment(req, res) {
-    const { name, code, description } = req.body;
-
-    if (!name || !code) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Name and code are required." });
-    }
-
-    try {
-      const existingDept = await db.query(
-        "SELECT * FROM departments WHERE code = $1",
-        [code],
-      );
-
-      if (existingDept.rows.length > 0) {
-        return res
-          .status(409)
-          .json({ success: false, message: "Department code already exists." });
-      }
-
-      const newDept = await db.query(
-        "INSERT INTO departments (name, code, description) VALUES ($1, $2, $3) RETURNING *",
-        [name, code, description],
-      );
-
-      res
-        .status(201)
-        .json({
-          success: true,
-          message: "Department created successfully",
-          department: newDept.rows[0],
-        });
-    } catch (error) {
-      console.error(error);
-      res
-        .status(500)
-        .json({ success: false, message: "Error creating department" });
-    }
-  },
-
-  // Mettre à jour un département
-  async updateDepartment(req, res) {
-    const { id } = req.params;
-    const { name, code, description } = req.body;
-
-    if (!name || !code) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Name and code are required." });
-    }
-
-    try {
-      // Check if department with the same code already exists
-      const existingDept = await db.query(
-        "SELECT * FROM departments WHERE code = $1 AND id != $2",
-        [code, id],
-      );
-
-      if (existingDept.rows.length > 0) {
-        return res
-          .status(409)
-          .json({ success: false, message: "Department code already exists." });
-      }
-
-      const result = await db.query(
-        `UPDATE departments SET name = $1, code = $2, description = $3 WHERE id = $4 RETURNING *`,
-        [name, code, description, id],
-      );
-
-      if (result.rows.length === 0) {
-        return res
-          .status(404)
-          .json({ success: false, message: "Department not found." });
-      }
-
-      res
-        .status(200)
-        .json({
-          success: true,
-          message: "Department updated successfully",
-          department: result.rows[0],
-        });
-    } catch (error) {
-      console.error("Error updating department:", error);
-      res
-        .status(500)
-        .json({ success: false, message: "Error updating department" });
-    }
-  },
-
-  // Désactiver un département
-  async deactivateDepartment(req, res) {
-    const { id } = req.params;
-
-    try {
-      const result = await db.query(
-        `UPDATE departments SET is_active = false WHERE id = $1 RETURNING *`,
-        [id],
-      );
-
-      if (result.rows.length === 0) {
-        return res
-          .status(404)
-          .json({ success: false, message: "Department not found" });
-      }
-
-      res
-        .status(200)
-        .json({
-          success: true,
-          message: "Department deactivated successfully",
-          department: result.rows[0],
-        });
-    } catch (error) {
-      console.error("Error deactivating department:", error);
-      res
-        .status(500)
-        .json({ success: false, message: "Error deactivating department" });
-    }
-  },
-
-  // Supprimer un département
-  async deleteDepartment(req, res) {
-    const { id } = req.params;
-
-    try {
-      // Check if the department is linked to active users or reports
-      const userCount = await db.query(
-        "SELECT COUNT(*) FROM users WHERE department_id = $1",
-        [id],
-      );
-      const reportCount = await db.query(
-        "SELECT COUNT(*) FROM reports WHERE department_id = $1",
-        [id],
-      );
-
-      if (
-        parseInt(userCount.rows[0].count) > 0 ||
-        parseInt(reportCount.rows[0].count) > 0
-      ) {
-        return res
-          .status(400)
-          .json({
-            success: false,
-            message: "Cannot delete department with active users or reports.",
-          });
-      }
-
-      const result = await db.query(
-        "DELETE FROM departments WHERE id = $1 RETURNING *",
-        [id],
-      );
-
-      if (result.rows.length === 0) {
-        return res
-          .status(404)
-          .json({ success: false, message: "Department not found" });
-      }
-
-      res
-        .status(200)
-        .json({ success: true, message: "Department deleted successfully" });
-    } catch (error) {
-      console.error("Error deleting department:", error);
-      res
-        .status(500)
-        .json({ success: false, message: "Error deleting department" });
-    }
-  },
-
-  // Récupérer tous les départements avec pagination
+  /**
+   * Get all departments
+   * GET /api/departments
+   */
   async getAllDepartments(req, res) {
-    const { page = 1, limit = 20 } = req.query; // Default page is 1, and limit is 20
-
     try {
-      const offset = (page - 1) * limit;
-      const result = await db.query(
-        `SELECT id, name, code, description, is_active
-         FROM departments
-         WHERE is_active = true
-         ORDER BY name
-         LIMIT $1 OFFSET $2`,
-        [limit, offset],
-      );
+      const { is_active, search } = req.query;
 
-      const countResult = await db.query(
-        `SELECT COUNT(*) as total_departments FROM departments WHERE is_active = true`,
-      );
-      const totalDepartments = countResult.rows[0].total_departments;
-      const totalPages = Math.ceil(totalDepartments / limit);
-
-      res.json({
-        success: true,
-        departments: result.rows,
-        pagination: {
-          totalDepartments,
-          totalPages,
-          currentPage: page,
-          limit,
-        },
+      const departments = await Department.findAll({
+        is_active:
+          is_active === "true"
+            ? true
+            : is_active === "false"
+              ? false
+              : undefined,
+        search,
       });
+
+      return successResponse(res, { departments }, "Départements récupérés");
     } catch (error) {
-      console.error("Error fetching departments:", error);
-      res.status(500).json({
-        success: false,
-        message: "Error retrieving departments",
-      });
+      console.error("Get departments error:", error);
+      return errorResponse(
+        res,
+        "Erreur lors de la récupération des départements",
+        HTTP_STATUS.INTERNAL_ERROR,
+      );
     }
   },
 
-  // Récupérer un département spécifique
+  /**
+   * Get single department
+   * GET /api/departments/:id
+   */
   async getDepartment(req, res) {
-    const { id } = req.params;
-
     try {
-      const result = await db.query(
-        `SELECT d.*, 
-          COUNT(DISTINCT u.id) as total_users, 
-          COUNT(DISTINCT e.id) as total_employees
-         FROM departments d
-         LEFT JOIN users u ON d.id = u.department_id
-         LEFT JOIN users e ON d.id = e.department_id AND e.role NOT IN ('admin', 'validateur') AND e.is_active = true
-         WHERE d.id = $1
-         GROUP BY d.id, d.name, d.code, d.description, d.is_active`,
-        [id],
-      );
+      const { id } = req.params;
 
-      if (result.rows.length === 0) {
-        return res
-          .status(404)
-          .json({ success: false, message: "Department not found" });
+      const department = await Department.findById(id);
+
+      if (!department) {
+        return notFoundResponse(res, "Département non trouvé");
       }
 
-      res.json({
-        success: true,
-        department: result.rows[0],
-      });
+      return successResponse(res, { department }, "Département récupéré");
     } catch (error) {
-      console.error("Error retrieving department stats:", error);
-      res.status(500).json({
-        success: false,
-        message: "Error retrieving department stats",
-      });
+      console.error("Get department error:", error);
+      return errorResponse(
+        res,
+        "Erreur lors de la récupération du département",
+        HTTP_STATUS.INTERNAL_ERROR,
+      );
     }
   },
 
-  // Récupérer tous les utilisateurs d'un département
-  async getDepartmentUsers(req, res) {
-    const { id } = req.params;
-    const { page = 1, limit = 20 } = req.query; // Pagination
-
+  /**
+   * Create department
+   * POST /api/departments
+   */
+  async createDepartment(req, res) {
     try {
-      const offset = (page - 1) * limit;
-      const result = await db.query(
-        `SELECT id, username, email, full_name, role, department_id, is_active
-         FROM users
-         WHERE department_id = $1
-         ORDER BY full_name
-         LIMIT $2 OFFSET $3`,
-        [id, limit, offset],
-      );
+      const { code, name, icon, color, description, manager_id } = req.body;
 
-      const countResult = await db.query(
-        `SELECT COUNT(*) as total_users FROM users WHERE department_id = $1`,
-        [id],
-      );
-      const totalUsers = countResult.rows[0].total_users;
-      const totalPages = Math.ceil(totalUsers / limit);
+      // Check if code exists
+      const existing = await Department.findByCode(code);
 
-      res.json({
-        success: true,
-        users: result.rows,
-        pagination: {
-          totalUsers,
-          totalPages,
-          currentPage: page,
-          limit,
-        },
+      if (existing) {
+        return errorResponse(
+          res,
+          "Un département avec ce code existe déjà",
+          HTTP_STATUS.CONFLICT,
+        );
+      }
+
+      // Create
+      const newDepartment = await Department.create({
+        code,
+        name,
+        icon,
+        color,
+        description,
+        manager_id,
       });
+
+      // Audit log
+      await AuditLog.create({
+        user_id: req.userId,
+        action: "CREATE",
+        entity_type: "department",
+        entity_id: newDepartment.id,
+        details: { code, name },
+        ip_address: req.ip,
+        user_agent: req.get("user-agent"),
+      });
+
+      return createdResponse(
+        res,
+        { department: newDepartment },
+        "Département créé avec succès",
+      );
     } catch (error) {
-      console.error("Error retrieving department users:", error);
-      res.status(500).json({
-        success: false,
-        message: "Error retrieving department users",
-      });
+      console.error("Create department error:", error);
+      return errorResponse(
+        res,
+        "Erreur lors de la création du département",
+        HTTP_STATUS.INTERNAL_ERROR,
+      );
     }
   },
 
-  // Récupérer tous les employés d'un département
-  async getDepartmentEmployees(req, res) {
-    const { id } = req.params;
-    const { page = 1, limit = 20 } = req.query; // Pagination
-
+  /**
+   * Update department
+   * PUT /api/departments/:id
+   */
+  async updateDepartment(req, res) {
     try {
-      const offset = (page - 1) * limit;
-      const result = await db.query(
-        `SELECT id, username, email, full_name, role, department_id, is_active
-         FROM users
-         WHERE department_id = $1 AND role NOT IN ('admin', 'validateur') AND is_active = true
-         ORDER BY full_name
-         LIMIT $2 OFFSET $3`,
-        [id, limit, offset],
-      );
+      const { id } = req.params;
+      const updateData = req.body;
 
-      const countResult = await db.query(
-        `SELECT COUNT(*) as total_employees FROM users WHERE department_id = $1 AND role NOT IN ('admin', 'validateur') AND is_active = true`,
-        [id],
-      );
-      const totalEmployees = countResult.rows[0].total_employees;
-      const totalPages = Math.ceil(totalEmployees / limit);
+      // Check if exists
+      const existing = await Department.findById(id);
 
-      res.json({
-        success: true,
-        employees: result.rows,
-        pagination: {
-          totalEmployees,
-          totalPages,
-          currentPage: page,
-          limit,
-        },
+      if (!existing) {
+        return notFoundResponse(res, "Département non trouvé");
+      }
+
+      // If code is being changed, check uniqueness
+      if (updateData.code && updateData.code !== existing.code) {
+        const codeExists = await Department.findByCode(updateData.code);
+        if (codeExists) {
+          return errorResponse(
+            res,
+            "Un département avec ce code existe déjà",
+            HTTP_STATUS.CONFLICT,
+          );
+        }
+      }
+
+      // Update
+      const updatedDepartment = await Department.update(id, updateData);
+
+      // Audit log
+      await AuditLog.create({
+        user_id: req.userId,
+        action: "UPDATE",
+        entity_type: "department",
+        entity_id: id,
+        details: updateData,
+        ip_address: req.ip,
+        user_agent: req.get("user-agent"),
       });
+
+      return successResponse(
+        res,
+        { department: updatedDepartment },
+        "Département mis à jour",
+      );
     } catch (error) {
-      console.error("Error retrieving department employees:", error);
-      res.status(500).json({
-        success: false,
-        message: "Error retrieving department employees",
+      console.error("Update department error:", error);
+      return errorResponse(
+        res,
+        "Erreur lors de la mise à jour du département",
+        HTTP_STATUS.INTERNAL_ERROR,
+      );
+    }
+  },
+
+  /**
+   * Delete department
+   * DELETE /api/departments/:id
+   */
+  async deleteDepartment(req, res) {
+    try {
+      const { id } = req.params;
+
+      // Check if exists
+      const existing = await Department.findById(id);
+
+      if (!existing) {
+        return notFoundResponse(res, "Département non trouvé");
+      }
+
+      // Soft delete
+      await Department.delete(id);
+
+      // Audit log
+      await AuditLog.create({
+        user_id: req.userId,
+        action: "DELETE",
+        entity_type: "department",
+        entity_id: id,
+        details: { code: existing.code, name: existing.name },
+        ip_address: req.ip,
+        user_agent: req.get("user-agent"),
       });
+
+      return successResponse(res, null, "Département supprimé");
+    } catch (error) {
+      console.error("Delete department error:", error);
+      return errorResponse(
+        res,
+        "Erreur lors de la suppression du département",
+        HTTP_STATUS.INTERNAL_ERROR,
+      );
+    }
+  },
+
+  /**
+   * Get department statistics
+   * GET /api/departments/:id/stats
+   */
+  async getDepartmentStats(req, res) {
+    try {
+      const { id } = req.params;
+
+      const stats = await Department.getStats(id);
+
+      return successResponse(res, { stats }, "Statistiques récupérées");
+    } catch (error) {
+      console.error("Get department stats error:", error);
+      return errorResponse(
+        res,
+        "Erreur lors de la récupération des statistiques",
+        HTTP_STATUS.INTERNAL_ERROR,
+      );
     }
   },
 };

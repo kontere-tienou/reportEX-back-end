@@ -1,194 +1,327 @@
-const db = require("../config/database");
-const bcrypt = require("bcryptjs");
+const { User, AuditLog } = require("../models");
+const {
+  successResponse,
+  errorResponse,
+  paginatedResponse,
+  createdResponse,
+  notFoundResponse,
+} = require("../utils/responseFormatter");
+const { HTTP_STATUS } = require("../config/constants");
+
+/**
+ * ==========================================
+ * USER CONTROLLER
+ * ==========================================
+ */
 
 const userController = {
-  // 🔹 GET ALL USERS (Admin only)
+  /**
+   * Get all users with pagination
+   * GET /api/users
+   */
   async getAllUsers(req, res) {
     try {
-      if (req.user.role !== "admin") {
-        return res
-          .status(403)
-          .json({ success: false, message: "Accès refusé" });
-      }
+      const { page, limit, role, department_id, is_active, search } = req.query;
 
-      const result = await db.query(`
-        SELECT u.id, u.username, u.email, u.full_name, u.role,
-               u.is_active, u.created_at,
-               d.id as department_id,
-               d.name as department_name
-        FROM users u
-        LEFT JOIN departments d ON u.department_id = d.id
-        ORDER BY u.created_at DESC
-      `);
-
-      res.json({
-        success: true,
-        users: result.rows,
+      const result = await User.findAll({
+        page: parseInt(page) || 1,
+        limit: parseInt(limit) || 20,
+        role,
+        department_id,
+        is_active:
+          is_active === "true"
+            ? true
+            : is_active === "false"
+              ? false
+              : undefined,
+        search,
       });
+
+      return paginatedResponse(
+        res,
+        result.users,
+        result.pagination,
+        "Utilisateurs récupérés",
+      );
     } catch (error) {
-      console.error("Erreur getAllUsers:", error);
-      res.status(500).json({ success: false });
+      console.error("Get all users error:", error);
+      return errorResponse(
+        res,
+        "Erreur lors de la récupération des utilisateurs",
+        HTTP_STATUS.INTERNAL_ERROR,
+      );
     }
   },
 
-  // 🔹 GET SINGLE USER
+  /**
+   * Get single user
+   * GET /api/users/:id
+   */
   async getUser(req, res) {
     try {
       const { id } = req.params;
 
-      const result = await db.query(
-        `
-        SELECT id, username, email, full_name, role, department_id, is_active
-        FROM users
-        WHERE id = $1
-      `,
-        [id],
-      );
+      const user = await User.findById(id);
 
-      if (result.rowCount === 0) {
-        return res
-          .status(404)
-          .json({ success: false, message: "Utilisateur non trouvé" });
+      if (!user) {
+        return notFoundResponse(res, "Utilisateur non trouvé");
       }
 
-      res.json({
-        success: true,
-        user: result.rows[0],
-      });
+      // Remove password
+      delete user.password;
+
+      return successResponse(res, { user }, "Utilisateur récupéré");
     } catch (error) {
-      console.error(error);
-      res.status(500).json({ success: false });
+      console.error("Get user error:", error);
+      return errorResponse(
+        res,
+        "Erreur lors de la récupération de l'utilisateur",
+        HTTP_STATUS.INTERNAL_ERROR,
+      );
     }
   },
 
-  // 🔹 CREATE USER (Admin only)
+  /**
+   * Create new user
+   * POST /api/users
+   */
   async createUser(req, res) {
     try {
-      if (req.user.role !== "admin") {
-        return res
-          .status(403)
-          .json({ success: false, message: "Accès refusé" });
-      }
-
-      const { username, email, full_name, department_id, role, password } =
+      const { email, password, full_name, role, department_id, phone } =
         req.body;
 
-      if (
-        !username ||
-        !email ||
-        !full_name ||
-        !department_id ||
-        !role ||
-        !password
-      ) {
-        return res
-          .status(400)
-          .json({ success: false, message: "Tous les champs sont requis" });
+      // Check if exists
+      const existing = await User.findByEmail(email);
+
+      if (existing) {
+        return errorResponse(
+          res,
+          "Un utilisateur avec cet email existe déjà",
+          HTTP_STATUS.CONFLICT,
+        );
       }
 
-      const exists = await db.query(
-        "SELECT id FROM users WHERE username = $1 OR email = $2",
-        [username, email],
-      );
-
-      if (exists.rowCount > 0) {
-        return res
-          .status(409)
-          .json({ success: false, message: "Username ou Email déjà utilisé" });
-      }
-
-      const hashedPassword = await bcrypt.hash(password, 10);
-
-      const result = await db.query(
-        `
-        INSERT INTO users (username, email, full_name, department_id, role, password_hash)
-        VALUES ($1,$2,$3,$4,$5,$6)
-        RETURNING id, username, email, full_name, role, department_id
-      `,
-        [username, email, full_name, department_id, role, hashedPassword],
-      );
-
-      res.status(201).json({
-        success: true,
-        message: "Utilisateur créé",
-        user: result.rows[0],
+      // Create
+      const newUser = await User.create({
+        email,
+        password,
+        full_name,
+        role,
+        department_id,
+        phone,
       });
+
+      // Audit log
+      await AuditLog.create({
+        user_id: req.userId,
+        action: "CREATE",
+        entity_type: "user",
+        entity_id: newUser.id,
+        details: { email, role, department_id },
+        ip_address: req.ip,
+        user_agent: req.get("user-agent"),
+      });
+
+      // Remove password
+      delete newUser.password;
+
+      return createdResponse(
+        res,
+        { user: newUser },
+        "Utilisateur créé avec succès",
+      );
     } catch (error) {
-      console.error(error);
-      res.status(500).json({ success: false });
+      console.error("Create user error:", error);
+      return errorResponse(
+        res,
+        "Erreur lors de la création de l'utilisateur",
+        HTTP_STATUS.INTERNAL_ERROR,
+      );
     }
   },
 
-  // 🔹 UPDATE USER
+  /**
+   * Update user
+   * PUT /api/users/:id
+   */
   async updateUser(req, res) {
     try {
       const { id } = req.params;
-      const { full_name, email, role, department_id } = req.body;
+      const updateData = req.body;
 
-      const result = await db.query(
-        `
-        UPDATE users
-        SET full_name = $1,
-            email = $2,
-            role = $3,
-            department_id = $4,
-            updated_at = CURRENT_TIMESTAMP
-        WHERE id = $5
-        RETURNING id, username, email, full_name, role, department_id
-      `,
-        [full_name, email, role, department_id, id],
-      );
+      // Check if exists
+      const existing = await User.findById(id);
 
-      if (result.rowCount === 0) {
-        return res
-          .status(404)
-          .json({ success: false, message: "Utilisateur non trouvé" });
+      if (!existing) {
+        return notFoundResponse(res, "Utilisateur non trouvé");
       }
 
-      res.json({
-        success: true,
-        message: "Utilisateur mis à jour",
-        user: result.rows[0],
+      // Update
+      const updatedUser = await User.update(id, updateData);
+
+      // Audit log
+      await AuditLog.create({
+        user_id: req.userId,
+        action: "UPDATE",
+        entity_type: "user",
+        entity_id: id,
+        details: updateData,
+        ip_address: req.ip,
+        user_agent: req.get("user-agent"),
       });
+
+      return successResponse(
+        res,
+        { user: updatedUser },
+        "Utilisateur mis à jour",
+      );
     } catch (error) {
-      console.error(error);
-      res.status(500).json({ success: false });
+      console.error("Update user error:", error);
+      return errorResponse(
+        res,
+        "Erreur lors de la mise à jour de l'utilisateur",
+        HTTP_STATUS.INTERNAL_ERROR,
+      );
     }
   },
 
-  // 🔹 ACTIVATE / DEACTIVATE USER
-  async toggleUserStatus(req, res) {
+  /**
+   * Activate user
+   * PUT /api/users/:id/activate
+   */
+  async activateUser(req, res) {
     try {
       const { id } = req.params;
 
-      await db.query(
-        `
-        UPDATE users
-        SET is_active = NOT is_active,
-            updated_at = CURRENT_TIMESTAMP
-        WHERE id = $1
-      `,
-        [id],
-      );
+      await User.activate(id);
 
-      res.json({ success: true, message: "Statut modifié" });
+      // Audit log
+      await AuditLog.create({
+        user_id: req.userId,
+        action: "UPDATE",
+        entity_type: "user",
+        entity_id: id,
+        details: { action: "activated" },
+        ip_address: req.ip,
+        user_agent: req.get("user-agent"),
+      });
+
+      return successResponse(res, null, "Utilisateur activé");
     } catch (error) {
-      console.error(error);
-      res.status(500).json({ success: false });
+      console.error("Activate user error:", error);
+      return errorResponse(
+        res,
+        "Erreur lors de l'activation",
+        HTTP_STATUS.INTERNAL_ERROR,
+      );
     }
   },
 
-  // 🔹 DELETE USER
+  /**
+   * Deactivate user
+   * PUT /api/users/:id/deactivate
+   */
+  async deactivateUser(req, res) {
+    try {
+      const { id } = req.params;
+
+      await User.deactivate(id);
+
+      // Audit log
+      await AuditLog.create({
+        user_id: req.userId,
+        action: "UPDATE",
+        entity_type: "user",
+        entity_id: id,
+        details: { action: "deactivated" },
+        ip_address: req.ip,
+        user_agent: req.get("user-agent"),
+      });
+
+      return successResponse(res, null, "Utilisateur désactivé");
+    } catch (error) {
+      console.error("Deactivate user error:", error);
+      return errorResponse(
+        res,
+        "Erreur lors de la désactivation",
+        HTTP_STATUS.INTERNAL_ERROR,
+      );
+    }
+  },
+
+  /**
+   * Delete user
+   * DELETE /api/users/:id
+   */
   async deleteUser(req, res) {
     try {
       const { id } = req.params;
 
-      await db.query("DELETE FROM users WHERE id = $1", [id]);
+      // Check if exists
+      const existing = await User.findById(id);
 
-      res.json({ success: true, message: "Utilisateur supprimé" });
+      if (!existing) {
+        return notFoundResponse(res, "Utilisateur non trouvé");
+      }
+
+      await User.delete(id);
+
+      // Audit log
+      await AuditLog.create({
+        user_id: req.userId,
+        action: "DELETE",
+        entity_type: "user",
+        entity_id: id,
+        details: { email: existing.email },
+        ip_address: req.ip,
+        user_agent: req.get("user-agent"),
+      });
+
+      return successResponse(res, null, "Utilisateur supprimé");
     } catch (error) {
-      console.error(error);
-      res.status(500).json({ success: false });
+      console.error("Delete user error:", error);
+      return errorResponse(
+        res,
+        "Erreur lors de la suppression",
+        HTTP_STATUS.INTERNAL_ERROR,
+      );
+    }
+  },
+
+  /**
+   * Get user statistics
+   * GET /api/users/stats
+   */
+  async getUserStats(req, res) {
+    try {
+      const { department_id, role } = req.query;
+
+      const total = await User.count({ department_id, role });
+      const active = await User.count({ department_id, role, is_active: true });
+      const inactive = await User.count({
+        department_id,
+        role,
+        is_active: false,
+      });
+
+      return successResponse(
+        res,
+        {
+          stats: {
+            total,
+            active,
+            inactive,
+          },
+        },
+        "Statistiques récupérées",
+      );
+    } catch (error) {
+      console.error("Get user stats error:", error);
+      return errorResponse(
+        res,
+        "Erreur lors de la récupération des statistiques",
+        HTTP_STATUS.INTERNAL_ERROR,
+      );
     }
   },
 };

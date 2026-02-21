@@ -1,72 +1,96 @@
 const rateLimit = require("express-rate-limit");
-const { RATE_LIMITS, HTTP_STATUS } = require("../config/constants");
+const config = require("../config/config");
+const { HTTP_STATUS } = require("../config/constants");
 
-// Rate limiter pour les tentatives de connexion
-const loginLimiter = rateLimit({
-  windowMs: RATE_LIMITS.LOGIN.windowMs,
-  max: RATE_LIMITS.LOGIN.max,
+/**
+ * ==========================================
+ * RATE LIMITING MIDDLEWARE
+ * ==========================================
+ */
+
+/**
+ * General rate limiter
+ */
+const generalLimiter = rateLimit({
+  windowMs: config.rateLimit.windowMs,
+  max: config.rateLimit.maxRequests,
   message: {
     success: false,
-    message: "Trop de tentatives de connexion. Réessayez dans 15 minutes.",
+    message: "Trop de requêtes. Veuillez réessayer plus tard.",
   },
   standardHeaders: true,
   legacyHeaders: false,
   handler: (req, res) => {
-    res.status(HTTP_STATUS.TOO_MANY_REQUESTS).json({
+    res.status(HTTP_STATUS.TOO_MANY_REQUESTS || 429).json({
       success: false,
-      message: "Trop de tentatives de connexion. Réessayez dans 15 minutes.",
-      retryAfter: Math.ceil(RATE_LIMITS.LOGIN.windowMs / 1000 / 60), // en minutes
+      message:
+        "Trop de requêtes depuis cette adresse IP. Veuillez réessayer dans quelques minutes.",
     });
   },
 });
 
-// Rate limiter général pour l'API
-const apiLimiter = rateLimit({
-  windowMs: RATE_LIMITS.API.windowMs,
-  max: RATE_LIMITS.API.max,
-  message: {
-    success: false,
-    message: "Trop de requêtes. Réessayez plus tard.",
-  },
-  standardHeaders: true,
-  legacyHeaders: false,
-  skip: (req) => {
-    // Ne pas limiter les requêtes GET de lecture simple
-    return req.method === "GET" && !req.path.includes("/download");
-  },
-});
-
-// Rate limiter pour les soumissions de rapports
-const reportSubmissionLimiter = rateLimit({
-  windowMs: RATE_LIMITS.REPORT_SUBMISSION.windowMs,
-  max: RATE_LIMITS.REPORT_SUBMISSION.max,
-  message: {
-    success: false,
-    message: "Trop de soumissions de rapports. Réessayez dans 1 heure.",
-  },
-  standardHeaders: true,
-  legacyHeaders: false,
-  keyGenerator: (req) => {
-    // Limiter par utilisateur (IP + user ID si connecté)
-    return req.user ? `user_${req.user.id}` : req.ip;
-  },
-});
-
-// Rate limiter stricte pour les actions sensibles (validation, suppression)
-const strictLimiter = rateLimit({
+/**
+ * Strict rate limiter for auth routes
+ */
+const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 20, // 20 requêtes max
+  max: 5, // 5 requests per windowMs
+  skipSuccessfulRequests: true,
   message: {
     success: false,
-    message: "Action limitée. Trop de requêtes sensibles.",
+    message: "Trop de tentatives de connexion. Compte temporairement bloqué.",
   },
-  standardHeaders: true,
-  legacyHeaders: false,
+  handler: (req, res) => {
+    res.status(HTTP_STATUS.TOO_MANY_REQUESTS || 429).json({
+      success: false,
+      message:
+        "Trop de tentatives de connexion. Veuillez réessayer dans 15 minutes.",
+    });
+  },
 });
+
+/**
+ * API limiter
+ */
+const apiLimiter = rateLimit({
+  windowMs: 1 * 60 * 1000, // 1 minute
+  max: 60, // 60 requests per minute
+  message: {
+    success: false,
+    message: "Limite d'API atteinte",
+  },
+});
+
+/**
+ * File upload limiter
+ */
+const uploadLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 50, // 50 uploads per hour
+  message: {
+    success: false,
+    message: "Limite de téléchargement atteinte. Réessayez dans 1 heure.",
+  },
+});
+
+/**
+ * Create custom limiter
+ */
+const createLimiter = (windowMinutes, maxRequests) => {
+  return rateLimit({
+    windowMs: windowMinutes * 60 * 1000,
+    max: maxRequests,
+    message: {
+      success: false,
+      message: `Limite de ${maxRequests} requêtes par ${windowMinutes} minutes atteinte`,
+    },
+  });
+};
 
 module.exports = {
-  loginLimiter,
+  generalLimiter,
+  authLimiter,
   apiLimiter,
-  reportSubmissionLimiter,
-  strictLimiter,
+  uploadLimiter,
+  createLimiter,
 };

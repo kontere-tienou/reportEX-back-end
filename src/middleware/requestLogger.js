@@ -1,70 +1,115 @@
-const logger = require("../config/logger");
+const morgan = require("morgan");
+const logger = require("../utils/logger");
+const config = require("../config/config");
 
 /**
- * Middleware pour logger toutes les requêtes HTTP
+ * ==========================================
+ * REQUEST LOGGING MIDDLEWARE
+ * ==========================================
  */
-const requestLogger = (req, res, next) => {
-  const start = Date.now();
 
-  // Logger la requête entrante
-  logger.http({
-    method: req.method,
-    url: req.url,
-    ip: req.ip,
-    userAgent: req.get("user-agent"),
-    userId: req.user?.id || "anonymous",
-  });
+/**
+ * Custom token for user ID
+ */
+morgan.token("user-id", (req) => {
+  return req.userId || "anonymous";
+});
 
-  // Capturer la réponse
-  res.on("finish", () => {
-    const duration = Date.now() - start;
-    const logData = {
+/**
+ * Custom token for response time in ms
+ */
+morgan.token("response-time-ms", (req, res) => {
+  if (!req._startAt || !res._startAt) {
+    return "-";
+  }
+
+  const ms =
+    (res._startAt[0] - req._startAt[0]) * 1e3 +
+    (res._startAt[1] - req._startAt[1]) * 1e-6;
+
+  return ms.toFixed(3);
+});
+
+/**
+ * Custom format
+ */
+const customFormat =
+  ":method :url :status :response-time-ms ms - :user-id - :remote-addr";
+
+/**
+ * Stream configuration
+ */
+const stream = {
+  write: (message) => {
+    logger.info(message.trim());
+  },
+};
+
+/**
+ * Development logger
+ */
+const developmentLogger = morgan("dev", { stream });
+
+/**
+ * Production logger
+ */
+const productionLogger = morgan(customFormat, {
+  stream,
+  skip: (req, res) => {
+    // Skip health check and static files
+    return req.url === "/health" || req.url.startsWith("/static");
+  },
+});
+
+/**
+ * Request logger based on environment
+ */
+const requestLogger =
+  config.server.env === "production" ? productionLogger : developmentLogger;
+
+/**
+ * Audit logger (detailed logging for audit trail)
+ */
+const auditLogger = async (req, res, next) => {
+  // Skip non-modifying methods
+  if (["GET", "HEAD", "OPTIONS"].includes(req.method)) {
+    return next();
+  }
+
+  // Log after response
+  const oldSend = res.send;
+  res.send = function (data) {
+    res.send = oldSend;
+
+    // Log to database or file
+    logger.audit({
+      timestamp: new Date(),
+      userId: req.userId,
       method: req.method,
-      url: req.url,
+      url: req.originalUrl,
+      body: req.body,
       status: res.statusCode,
-      duration: `${duration}ms`,
       ip: req.ip,
-      userId: req.user?.id || "anonymous",
-    };
+      userAgent: req.get("user-agent"),
+    });
 
-    // Logger selon le statut de la réponse
-    if (res.statusCode >= 500) {
-      logger.error(logData);
-    } else if (res.statusCode >= 400) {
-      logger.warn(logData);
-    } else {
-      logger.http(logData);
-    }
-  });
+    return res.send(data);
+  };
 
   next();
 };
 
 /**
- * Middleware pour logger les requêtes lentes (> 1s)
+ * Request ID middleware
  */
-const slowRequestLogger = (req, res, next) => {
-  const start = Date.now();
-
-  res.on("finish", () => {
-    const duration = Date.now() - start;
-
-    // Logger si la requête a pris plus de 1 seconde
-    if (duration > 1000) {
-      logger.warn({
-        message: "Slow request detected",
-        method: req.method,
-        url: req.url,
-        duration: `${duration}ms`,
-        userId: req.user?.id || "anonymous",
-      });
-    }
-  });
-
+const requestId = (req, res, next) => {
+  req.id = Date.now().toString(36) + Math.random().toString(36).substr(2);
+  res.setHeader("X-Request-ID", req.id);
   next();
 };
 
 module.exports = {
   requestLogger,
-  slowRequestLogger,
+  auditLogger,
+  requestId,
 };
