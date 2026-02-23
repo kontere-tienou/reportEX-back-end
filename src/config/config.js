@@ -58,7 +58,7 @@ module.exports = {
     port: parseInt(process.env.SMTP_PORT) || 587,
     user: process.env.SMTP_USER,
     password: process.env.SMTP_PASSWORD,
-    from: process.env.SMTP_FROM || "BATEX ERP <noreply@batex-ci.com>",
+    from: process.env.SMTP_FROM || "BATEX ERP <contact@batex-ci.com>",
   },
 
   // Redis

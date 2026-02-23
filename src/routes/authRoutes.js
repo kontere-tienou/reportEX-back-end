@@ -56,7 +56,7 @@ router.post(
   authorize("ADMIN"),
   validateBody,
   sanitizeBody,
-  authController.register,
+  authController.registerUser,
 );
 
 /**

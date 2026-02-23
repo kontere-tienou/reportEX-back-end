@@ -19,7 +19,7 @@ const authController = {
   /**
    * Login user
    * POST /api/auth/login
-   */
+   
   async login(req, res) {
     try {
       const { email, password } = req.body;
@@ -35,6 +35,12 @@ const authController = {
 
       // Find user
       const user = await User.findByEmail(email);
+      console.log("Type password saisi:", typeof password);
+      console.log("Longueur password saisi:", password?.length);
+
+      const hashed = user.password_hash || user.password;
+      console.log("Hash présent:", !!hashed);
+      console.log("Début hash:", hashed ? hashed.slice(0, 4) : null); 
 
       if (!user) {
         return unauthorizedResponse(res, "Email ou mot de passe incorrect");
@@ -104,6 +110,104 @@ const authController = {
       );
     } catch (error) {
       console.error("Login error:", error);
+      
+      return errorResponse(
+        res,
+        "Erreur lors de la connexion",
+        HTTP_STATUS.INTERNAL_ERROR,
+      );
+    }
+  },*/
+  async login(req, res) {
+    try {
+      const { email, password } = req.body;
+  
+      // Validation
+      if (!email || !password) {
+        return errorResponse(
+          res,
+          "Email et mot de passe requis",
+          HTTP_STATUS.BAD_REQUEST,
+        );
+      }
+  
+      // Find user
+      const user = await User.findByEmail(email);
+  
+      // ✅ Vérifier d'abord si user existe
+      if (!user) {
+        return unauthorizedResponse(res, "Email ou mot de passe incorrect");
+      }
+  
+      // Debug temporaire
+      console.log("Type password saisi:", typeof password);
+      console.log("Longueur password saisi:", password?.length);
+  
+      const hashed = user.password_hash || user.password;
+      console.log("Hash présent:", !!hashed);
+      console.log("Début hash:", hashed ? hashed.slice(0, 4) : null);
+  
+      // Check if active
+      if (!user.is_active) {
+        return errorResponse(
+          res,
+          "Compte désactivé. Contactez l'administrateur",
+          HTTP_STATUS.FORBIDDEN,
+        );
+      }
+  
+      // ✅ Verify password avec le bon champ
+      const isMatch = await comparePassword(password, hashed);
+  
+      if (!isMatch) {
+        return unauthorizedResponse(res, "Email ou mot de passe incorrect");
+      }
+  
+      // Generate tokens
+      const { accessToken, refreshToken } = generateTokenPair(user.id, {
+        role: user.role,
+        department_id: user.department_id,
+      });
+  
+      // Update last login
+      await User.updateLastLogin(user.id);
+  
+      // Audit log
+      await AuditLog.create({
+        user_id: user.id,
+        action: "LOGIN",
+        entity_type: "user",
+        entity_id: user.id,
+        details: { email },
+        ip_address: req.ip,
+        user_agent: req.get("user-agent"),
+      });
+  
+      return successResponse(
+        res,
+        {
+          user: {
+            id: user.id,
+            email: user.email,
+            full_name: user.full_name,
+            role: user.role,
+            role_name: user.role_name,
+            department: {
+              id: user.department_id,
+              name: user.department_name,
+              code: user.department_code,
+            },
+          },
+          tokens: {
+            accessToken,
+            refreshToken,
+          },
+        },
+        "Connexion réussie",
+        HTTP_STATUS.OK,
+      );
+    } catch (error) {
+      console.error("Login error:", error);
       return errorResponse(
         res,
         "Erreur lors de la connexion",
@@ -111,7 +215,6 @@ const authController = {
       );
     }
   },
-
   /**
    * Get current user profile
    * GET /api/auth/profile

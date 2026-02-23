@@ -15,19 +15,15 @@ const { requestLogger, requestId } = require("./src/middleware/requestLogger");
 const { generalLimiter } = require("./src/middleware/rateLimiter");
 const { notFound, errorHandler } = require("./src/middleware/errorHandler");
 
-/**
- * ==========================================
- * BATEX ERP - SERVER CONFIGURATION
- * ==========================================
+/*
+ ==========================================
+  BATEX ERP - CONFIGURATION DU SERVEUR
+==========================================
  */
 
-// Create Express app
 const app = express();
-
-// Create HTTP server
 const server = http.createServer(app);
 
-// Create Socket.IO instance
 const io = new Server(server, {
   cors: {
     origin: config.cors.origin,
@@ -38,16 +34,15 @@ const io = new Server(server, {
   pingInterval: 25000,
 });
 
-// Attach io to app for use in controllers
+// Attacher io à l'app pour utilisation dans les contrôleurs
 app.set("io", io);
 
 /**
- * ==========================================
- * MIDDLEWARE CONFIGURATION
- * ==========================================
+  ==========================================
+  CONFIGURATION DES MIDDLEWARES
+  ==========================================
  */
 
-// Security & Headers
 app.use(
   helmet({
     contentSecurityPolicy: false,
@@ -55,7 +50,6 @@ app.use(
   }),
 );
 
-// CORS
 app.use(
   cors({
     origin: config.cors.origin,
@@ -65,33 +59,22 @@ app.use(
   }),
 );
 
-// Compression
 app.use(compression());
-
-// Body parsing
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
-
-// Cookie parser
 app.use(cookieParser());
-
-// Request ID
 app.use(requestId);
 
-// Request logging
 if (config.server.env !== "test") {
   app.use(requestLogger);
 }
 
-// Rate limiting
 app.use(generalLimiter);
-
-// Static files (uploads)
 app.use("/uploads", express.static("uploads"));
 
 /**
  * ==========================================
- * ROUTES CONFIGURATION
+ * CONFIGURATION DES ROUTES
  * ==========================================
  */
 
@@ -99,112 +82,102 @@ configureRoutes(app);
 
 /**
  * ==========================================
- * ERROR HANDLING
+ * GESTION DES ERREURS
  * ==========================================
  */
 
-// 404 Not Found
+// 404 Non Trouvé
 app.use(notFound);
 
-// Global Error Handler
+// Gestionnaire d'erreurs global
 app.use(errorHandler);
 
 /**
  * ==========================================
- * SOCKET.IO CONFIGURATION
+ * CONFIGURATION SOCKET.IO
  * ==========================================
  */
 
-// Store connected users
 const connectedUsers = new Map();
 
 io.on("connection", (socket) => {
-  logger.info("Socket.IO: New client connected", {
+  logger.info("Socket.IO : Nouveau client connecté", {
     socketId: socket.id,
     ip: socket.handshake.address,
   });
 
   /**
-   * User authentication and room join
+   * Authentification de l'utilisateur et adhésion aux salles
    */
   socket.on("authenticate", (userId) => {
     if (!userId) {
-      logger.warn("Socket.IO: Authentication failed - no userId");
+      logger.warn("Socket.IO : Échec d'authentification - userId manquant");
       return;
     }
 
-    // Store user connection
     connectedUsers.set(userId, socket.id);
-
-    // Join user-specific room
     socket.join(`user:${userId}`);
 
-    logger.info("Socket.IO: User authenticated", {
+    logger.info("Socket.IO : Utilisateur authentifié", {
       userId,
       socketId: socket.id,
     });
 
-    // Send confirmation
     socket.emit("authenticated", {
       success: true,
       userId,
       socketId: socket.id,
+      message: "Authentification réussie",
     });
 
-    // Broadcast user online status
+    // Diffuser le statut en ligne
     io.emit("user:online", { userId });
   });
 
   /**
-   * Join department room
+   * Rejoindre une salle de département
    */
   socket.on("join:department", (departmentId) => {
     if (!departmentId) return;
-
     socket.join(`department:${departmentId}`);
-
-    logger.info("Socket.IO: Joined department room", {
+    logger.info("Socket.IO : Salle de département rejointe", {
       departmentId,
       socketId: socket.id,
     });
   });
 
   /**
-   * Leave department room
+   * Quitter une salle de département
    */
   socket.on("leave:department", (departmentId) => {
     if (!departmentId) return;
-
     socket.leave(`department:${departmentId}`);
-
-    logger.info("Socket.IO: Left department room", {
+    logger.info("Socket.IO : Salle de département quittée", {
       departmentId,
       socketId: socket.id,
     });
   });
 
   /**
-   * Real-time notification
+   * Notification en temps réel
    */
   socket.on("notification:send", (data) => {
     const { userId, notification } = data;
 
     if (!userId || !notification) {
-      logger.warn("Socket.IO: Invalid notification data");
+      logger.warn("Socket.IO : Données de notification invalides");
       return;
     }
 
-    // Send to specific user
     io.to(`user:${userId}`).emit("notification:new", notification);
-
-    logger.info("Socket.IO: Notification sent", {
+    logger.info("Socket.IO : Notification envoyée", {
       userId,
       type: notification.type,
     });
   });
 
   /**
-   * Typing indicator
+   * Indicateurs de saisie
    */
   socket.on("typing:start", (data) => {
     const { room, userId, userName } = data;
@@ -217,35 +190,25 @@ io.on("connection", (socket) => {
   });
 
   /**
-   * Disconnect handler
+   * Gestion de la déconnexion
    */
   socket.on("disconnect", () => {
-    // Find and remove user from connected users
     for (const [userId, socketId] of connectedUsers.entries()) {
       if (socketId === socket.id) {
         connectedUsers.delete(userId);
-
-        // Broadcast user offline status
         io.emit("user:offline", { userId });
-
-        logger.info("Socket.IO: User disconnected", {
+        logger.info("Socket.IO : Utilisateur déconnecté", {
           userId,
           socketId: socket.id,
         });
         break;
       }
     }
-
-    logger.info("Socket.IO: Client disconnected", {
-      socketId: socket.id,
-    });
+    logger.info("Socket.IO : Client déconnecté", { socketId: socket.id });
   });
 
-  /**
-   * Error handler
-   */
   socket.on("error", (error) => {
-    logger.error("Socket.IO: Socket error", {
+    logger.error("Socket.IO : Erreur de socket", {
       socketId: socket.id,
       error: error.message,
     });
@@ -254,120 +217,104 @@ io.on("connection", (socket) => {
 
 /**
  * ==========================================
- * DATABASE CONNECTION CHECK
+ * VÉRIFICATION DE LA BASE DE DONNÉES
  * ==========================================
  */
 
 const checkDatabase = async () => {
   try {
     await pool.query("SELECT NOW()");
-    logger.info("✅ Database connection successful");
+    logger.info("✅ Connexion à la base de données réussie");
     return true;
   } catch (error) {
-    logger.error("❌ Database connection failed:", error);
+    logger.error("❌ Échec de la connexion à la base de données :", error);
     return false;
   }
 };
 
 /**
  * ==========================================
- * SERVER STARTUP
+ * DÉMARRAGE DU SERVEUR
  * ==========================================
  */
 
 const startServer = async () => {
   try {
-    // Check database connection
     const dbConnected = await checkDatabase();
 
     if (!dbConnected) {
-      logger.error("Cannot start server - database connection failed");
+      logger.error("Impossible de démarrer le serveur - Échec connexion DB");
       process.exit(1);
     }
 
-    // Start server
     const PORT = config.server.port;
 
     server.listen(PORT, () => {
       logger.info("==========================================");
-      logger.info("🚀 BATEX ERP SERVER STARTED");
+      logger.info("🚧 SERVEUR BATEX ERP DÉMARRÉ");
       logger.info("==========================================");
-      logger.info(`Environment: ${config.server.env}`);
-      logger.info(`Port: ${PORT}`);
-      logger.info(`API URL: http://localhost:${PORT}`);
-      logger.info(`Health Check: http://localhost:${PORT}/health`);
-      logger.info(`Socket.IO: Enabled`);
+      logger.info(`Environnement : ${config.server.env}`);
+      logger.info(`Port : ${PORT}`);
+      logger.info(`URL API : http://localhost:${PORT}`);
+      logger.info(`Santé : http://localhost:${PORT}/health`);
+      logger.info(`Socket.IO : Activé`);
       logger.info("==========================================");
     });
   } catch (error) {
-    logger.error("Failed to start server:", error);
+    logger.error("Échec du démarrage du serveur :", error);
     process.exit(1);
   }
 };
 
 /**
  * ==========================================
- * GRACEFUL SHUTDOWN
+ * ARRÊT GRACIEUX (GRACEFUL SHUTDOWN)
  * ==========================================
  */
 
 const gracefulShutdown = async (signal) => {
-  logger.info(`${signal} received. Starting graceful shutdown...`);
+  logger.info(`Signal ${signal} reçu. Début de l'arrêt gracieux...`);
 
-  // Stop accepting new connections
   server.close(async () => {
-    logger.info("HTTP server closed");
+    logger.info("Serveur HTTP fermé");
 
     try {
-      // Close database pool
       await closePool();
-      logger.info("Database pool closed");
+      logger.info("Pool de base de données fermé");
 
-      // Close Socket.IO connections
       io.close(() => {
-        logger.info("Socket.IO server closed");
+        logger.info("Serveur Socket.IO fermé");
       });
 
-      logger.info("Graceful shutdown complete");
+      logger.info("Arrêt gracieux terminé");
       process.exit(0);
     } catch (error) {
-      logger.error("Error during shutdown:", error);
+      logger.error("Erreur lors de l'arrêt :", error);
       process.exit(1);
     }
   });
 
-  // Force shutdown after 30 seconds
   setTimeout(() => {
-    logger.error("Forced shutdown after timeout");
+    logger.error("Arrêt forcé après délai d'attente");
     process.exit(1);
   }, 30000);
 };
 
-// Handle shutdown signals
 process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
 process.on("SIGINT", () => gracefulShutdown("SIGINT"));
 
-// Handle uncaught exceptions
 process.on("uncaughtException", (error) => {
-  logger.error("Uncaught Exception:", error);
+  logger.error("Exception non capturée :", error);
   gracefulShutdown("uncaughtException");
 });
 
-// Handle unhandled promise rejections
 process.on("unhandledRejection", (reason, promise) => {
-  logger.error("Unhandled Rejection at:", promise, "reason:", reason);
+  logger.error("Rejet de promesse non géré à :", promise, "raison :", reason);
   gracefulShutdown("unhandledRejection");
 });
-
-/**
- * ==========================================
- * START THE SERVER
- * ==========================================
- */
 
 if (require.main === module) {
   startServer();
 }
 
-// Export for testing
 module.exports = { app, server, io };

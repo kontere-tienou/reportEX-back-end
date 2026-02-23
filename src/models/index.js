@@ -8,7 +8,7 @@ const User = require("./userModel");
 const Department = require("./departmentModel");
 const Employee = require("./employee");
 const Notification = require("./Notification");
-const AuditLog = require("./logAudit");
+const AuditLog = require("./AuditLog");
 
 
 
