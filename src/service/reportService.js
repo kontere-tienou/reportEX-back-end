@@ -1,7 +1,7 @@
 // /services/reportService.js
 const db = require("../config/database");
 const { REPORT_STATUS, AUDIT_ACTIONS } = require("../config/constants");
-const { isValidPeriod } = require("../utils/dateHelpers");
+const { isValidPeriod } = require("../middleware/errorHandler");
 const logger = require("../config/logger");
 const { sendReportSubmittedEmail } = require("./emailService");
 const {
@@ -9,7 +9,7 @@ const {
   NotFoundError,
   ValidationError,
   ForbiddenError,
-} = require("../utils/errorHandler");
+} = require("../middleware/errorHandler");
 
 const reportService = {
   /**

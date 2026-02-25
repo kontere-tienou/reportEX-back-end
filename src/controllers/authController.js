@@ -11,7 +11,7 @@ const AuditLog = require("../models/AuditLog");
 
 /**
  * ==========================================
- * AUTH CONTROLLER
+ * AUTH CONTROLLER (FIXED)
  * ==========================================
  */
 
@@ -19,13 +19,18 @@ const authController = {
   /**
    * Login user
    * POST /api/auth/login
-   
+   */
   async login(req, res) {
     try {
       const { email, password } = req.body;
 
+      console.log("=== LOGIN DEBUG ===");
+      console.log("Email reçu:", email);
+      console.log("Password reçu (masqué):", password ? "***" : "vide");
+
       // Validation
       if (!email || !password) {
+        console.log("❌ Email ou password manquant");
         return errorResponse(
           res,
           "Email et mot de passe requis",
@@ -33,21 +38,39 @@ const authController = {
         );
       }
 
-      // Find user
-      const user = await User.findByEmail(email);
-      console.log("Type password saisi:", typeof password);
-      console.log("Longueur password saisi:", password?.length);
+      // Find user with raw query to see exact data
+      const db = require("../config/database");
+      const result = await db.query(
+        `SELECT 
+          u.id, u.email, u.password, u.full_name, u.role, u.department_id,
+          u.phone, u.avatar, u.is_active,
+          d.name as department_name, d.code as department_code,
+          r.name as role_name, r.level as role_level
+         FROM users u
+         LEFT JOIN departments d ON u.department_id = d.id
+         LEFT JOIN roles r ON u.role = r.code
+         WHERE u.email = $1`,
+        [email],
+      );
 
-      const hashed = user.password_hash || user.password;
-      console.log("Hash présent:", !!hashed);
-      console.log("Début hash:", hashed ? hashed.slice(0, 4) : null); 
+      console.log("Résultat query:", result.rowCount, "ligne(s)");
 
-      if (!user) {
+      if (result.rowCount === 0) {
+        console.log("❌ Utilisateur non trouvé");
         return unauthorizedResponse(res, "Email ou mot de passe incorrect");
       }
 
+      const user = result.rows[0];
+      console.log("✅ Utilisateur trouvé:", user.email);
+      console.log(
+        "Hash en base:",
+        user.password ? user.password.substring(0, 20) + "..." : "null",
+      );
+      console.log("Active:", user.is_active);
+
       // Check if active
       if (!user.is_active) {
+        console.log("❌ Compte désactivé");
         return errorResponse(
           res,
           "Compte désactivé. Contactez l'administrateur",
@@ -55,11 +78,27 @@ const authController = {
         );
       }
 
-      // Verify password
-      const isMatch = await comparePassword(password, user.password);
+      // Verify password with bcrypt directly
+      const bcrypt = require("bcryptjs");
+      console.log("Vérification password...");
 
-      if (!isMatch) {
-        return unauthorizedResponse(res, "Email ou mot de passe incorrect");
+      try {
+        const isMatch = await bcrypt.compare(password, user.password);
+        console.log("Résultat comparaison:", isMatch);
+
+        if (!isMatch) {
+          console.log("❌ Mot de passe incorrect");
+          return unauthorizedResponse(res, "Email ou mot de passe incorrect");
+        }
+
+        console.log("✅ Mot de passe correct");
+      } catch (compareError) {
+        console.error("Erreur lors de la comparaison bcrypt:", compareError);
+        return errorResponse(
+          res,
+          "Erreur lors de la vérification du mot de passe",
+          HTTP_STATUS.INTERNAL_ERROR,
+        );
       }
 
       // Generate tokens
@@ -68,23 +107,35 @@ const authController = {
         department_id: user.department_id,
       });
 
+      console.log("✅ Tokens générés");
+
       // Update last login
-      await User.updateLastLogin(user.id);
+      await db.query(
+        "UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = $1",
+        [user.id],
+      );
 
       // Audit log
-      await AuditLog.create({
-        user_id: user.id,
-        action: "LOGIN",
-        entity_type: "user",
-        entity_id: user.id,
-        details: { email },
-        ip_address: req.ip,
-        user_agent: req.get("user-agent"),
-      });
+      try {
+        await AuditLog.create({
+          user_id: user.id,
+          action: "LOGIN",
+          entity_type: "user",
+          entity_id: user.id,
+          details: { email },
+          ip_address: req.ip,
+          user_agent: req.get("user-agent"),
+        });
+      } catch (auditError) {
+        console.error("Erreur audit log:", auditError);
+        // Continue même si audit log échoue
+      }
 
       // Remove password from response
       delete user.password;
 
+      console.log("✅ LOGIN RÉUSSI");
+
       return successResponse(
         res,
         {
@@ -94,11 +145,14 @@ const authController = {
             full_name: user.full_name,
             role: user.role,
             role_name: user.role_name,
+            role_level: user.role_level,
             department: {
               id: user.department_id,
               name: user.department_name,
               code: user.department_code,
             },
+            phone: user.phone,
+            avatar: user.avatar,
           },
           tokens: {
             accessToken,
@@ -109,105 +163,8 @@ const authController = {
         HTTP_STATUS.OK,
       );
     } catch (error) {
-      console.error("Login error:", error);
-      
-      return errorResponse(
-        res,
-        "Erreur lors de la connexion",
-        HTTP_STATUS.INTERNAL_ERROR,
-      );
-    }
-  },*/
-  async login(req, res) {
-    try {
-      const { email, password } = req.body;
-  
-      // Validation
-      if (!email || !password) {
-        return errorResponse(
-          res,
-          "Email et mot de passe requis",
-          HTTP_STATUS.BAD_REQUEST,
-        );
-      }
-  
-      // Find user
-      const user = await User.findByEmail(email);
-  
-      // ✅ Vérifier d'abord si user existe
-      if (!user) {
-        return unauthorizedResponse(res, "Email ou mot de passe incorrect");
-      }
-  
-      // Debug temporaire
-      console.log("Type password saisi:", typeof password);
-      console.log("Longueur password saisi:", password?.length);
-  
-      const hashed = user.password_hash || user.password;
-      console.log("Hash présent:", !!hashed);
-      console.log("Début hash:", hashed ? hashed.slice(0, 4) : null);
-  
-      // Check if active
-      if (!user.is_active) {
-        return errorResponse(
-          res,
-          "Compte désactivé. Contactez l'administrateur",
-          HTTP_STATUS.FORBIDDEN,
-        );
-      }
-  
-      // ✅ Verify password avec le bon champ
-      const isMatch = await comparePassword(password, hashed);
-  
-      if (!isMatch) {
-        return unauthorizedResponse(res, "Email ou mot de passe incorrect");
-      }
-  
-      // Generate tokens
-      const { accessToken, refreshToken } = generateTokenPair(user.id, {
-        role: user.role,
-        department_id: user.department_id,
-      });
-  
-      // Update last login
-      await User.updateLastLogin(user.id);
-  
-      // Audit log
-      await AuditLog.create({
-        user_id: user.id,
-        action: "LOGIN",
-        entity_type: "user",
-        entity_id: user.id,
-        details: { email },
-        ip_address: req.ip,
-        user_agent: req.get("user-agent"),
-      });
-  
-      return successResponse(
-        res,
-        {
-          user: {
-            id: user.id,
-            email: user.email,
-            full_name: user.full_name,
-            role: user.role,
-            role_name: user.role_name,
-            department: {
-              id: user.department_id,
-              name: user.department_name,
-              code: user.department_code,
-            },
-          },
-          tokens: {
-            accessToken,
-            refreshToken,
-          },
-        },
-        "Connexion réussie",
-        HTTP_STATUS.OK,
-      );
-    } catch (error) {
-      console.error("Login error:", error);
+      console.error("❌ LOGIN ERROR:", error);
+      console.error("Stack:", error.stack);
       return errorResponse(
         res,
         "Erreur lors de la connexion",
@@ -215,6 +172,7 @@ const authController = {
       );
     }
   },
+
   /**
    * Get current user profile
    * GET /api/auth/profile
@@ -262,17 +220,39 @@ const authController = {
       }
 
       // Get user with password
-      const user = await User.findByEmail(req.user.email);
+      const db = require("../config/database");
+      const result = await db.query(
+        "SELECT password FROM users WHERE id = $1",
+        [req.userId],
+      );
+
+      if (result.rowCount === 0) {
+        return errorResponse(
+          res,
+          "Utilisateur non trouvé",
+          HTTP_STATUS.NOT_FOUND,
+        );
+      }
+
+      const user = result.rows[0];
 
       // Verify current password
-      const isMatch = await comparePassword(currentPassword, user.password);
+      const bcrypt = require("bcryptjs");
+      const isMatch = await bcrypt.compare(currentPassword, user.password);
 
       if (!isMatch) {
         return unauthorizedResponse(res, "Mot de passe actuel incorrect");
       }
 
+      // Hash new password
+      const { hashPassword } = require("../utils/password");
+      const hashedPassword = await hashPassword(newPassword);
+
       // Update password
-      await User.updatePassword(req.userId, newPassword);
+      await db.query(
+        "UPDATE users SET password = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2",
+        [hashedPassword, req.userId],
+      );
 
       // Audit log
       await AuditLog.create({

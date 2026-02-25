@@ -1,12 +1,11 @@
 const db = require("../config/database");
 const reportAccessRequestModel = require("../models/reportAccessRequestModel");
 
-// Si tu as des erreurs custom, remplace par les tiennes
 const {
   NotFoundError,
   ConflictError,
   ForbiddenError,
-} = require("../utils/errorHandler");
+} = require("../middleware/errorHandler");
 
 async function notifyUsers(io, userIds, payload) {
   if (!io) return;
@@ -17,53 +16,80 @@ const reportAccessRequestService = {
   /**
    * Demande d'accès à un rapport public d'un autre département
    */
-  async requestAccess({ reportId, user, io }) {
-    // 1) Charger rapport + visiblité
+  async requestAccess({ reportId, user, io, reason = null }) {
+    // 1) Charger rapport
     const reportRes = await db.query(
       `SELECT id, department_id, visibility, user_id
        FROM reports
        WHERE id = $1`,
       [reportId],
     );
-    if (reportRes.rowCount === 0)
+
+    if (reportRes.rowCount === 0) {
       throw new NotFoundError("Rapport introuvable");
+    }
 
     const report = reportRes.rows[0];
 
-    // 2) Direction/Admin n'ont pas besoin de demande
-    if (["direction", "admin"].includes(user.role)) {
+    // 2) Direction/Admin => pas besoin de demande
+    if (["DG", "ADMIN"].includes(user.role)) {
       throw new ConflictError("La direction/admin a déjà accès sans demande");
     }
 
-    // 3) Interdire si même dept
+    // 3) Auteur du rapport => a déjà accès
+    if (report.user_id === user.id) {
+      throw new ConflictError("Vous êtes l'auteur de ce rapport");
+    }
+
+    // 4) Même département => a déjà accès
     if (report.department_id === user.department_id) {
       throw new ConflictError("Votre département a déjà accès à ce rapport");
     }
 
-    // 4) Interdire si private
+    // 5) Private => demande impossible
     if (report.visibility !== "public") {
       throw new ForbiddenError("Ce rapport est privé (demande impossible)");
     }
 
-    // 5) éviter doublons pending
-    const pending = await reportAccessRequestModel.findPendingByReportAndDept(
+    // 6) Déjà approuvé pour cet utilisateur ?
+    const alreadyApproved = await reportAccessRequestModel.hasApprovedAccess(
       reportId,
-      user.department_id,
+      user.id,
     );
-    if (pending) {
+    if (alreadyApproved) {
+      throw new ConflictError("Vous avez déjà accès à ce rapport");
+    }
+
+    // 7) Éviter doublon pending (par département)
+    const pendingDept =
+      await reportAccessRequestModel.findPendingByReportAndDept(
+        reportId,
+        user.department_id,
+      );
+    if (pendingDept) {
       throw new ConflictError(
-        "Une demande est déjà en attente pour ce rapport",
+        "Une demande est déjà en attente pour ce rapport dans votre département",
       );
     }
 
-    // 6) Créer la demande
+    // (Optionnel) Éviter doublon pending par user
+    const pendingUser =
+      await reportAccessRequestModel.findPendingByReportAndUser(
+        reportId,
+        user.id,
+      );
+    if (pendingUser) {
+      throw new ConflictError("Vous avez déjà une demande en attente");
+    }
+
+    // 8) Créer la demande
     const request = await reportAccessRequestModel.create({
       reportId,
       requesterId: user.id,
-      requesterDepartmentId: user.department_id,
+      reason,
     });
 
-    // 7) Audit
+    // 9) Audit
     await db.query(
       `INSERT INTO audit_logs (user_id, action, entity_type, entity_id, details)
        VALUES ($1, $2, $3, $4, $5)`,
@@ -72,19 +98,20 @@ const reportAccessRequestService = {
         "REQUEST_REPORT_ACCESS",
         "report_access_request",
         request.id,
-        JSON.stringify({ reportId }),
+        JSON.stringify({ reportId, reason }),
       ],
     );
 
-    // 8) Notifier direction/admin (DB + realtime)
+    // 10) Notifier direction/admin/validateur
     const validatorsRes = await db.query(
       `SELECT id FROM users
-       WHERE role IN ('direction','admin','validateur') AND is_active = true`,
+       WHERE role IN ('DG','ADMIN')
+         AND is_active = true`,
     );
+
     const validatorIds = validatorsRes.rows.map((r) => r.id);
 
     if (validatorIds.length > 0) {
-      // DB notifications
       const values = validatorIds
         .map(
           (_, i) =>
@@ -96,7 +123,7 @@ const reportAccessRequestService = {
         uid,
         "access_request",
         "Demande d'accès à un rapport",
-        `Un département demande l'accès au rapport #${reportId}`,
+        `Un utilisateur demande l'accès au rapport #${reportId}`,
         `/reports/${reportId}`,
       ]);
 
@@ -106,11 +133,10 @@ const reportAccessRequestService = {
         params,
       );
 
-      // Realtime
       await notifyUsers(io, validatorIds, {
         type: "access_request",
         title: "Demande d'accès à un rapport",
-        message: `Un département demande l'accès au rapport #${reportId}`,
+        message: `Un utilisateur demande l'accès au rapport #${reportId}`,
         link: `/reports/${reportId}`,
         meta: { reportId, requestId: request.id },
       });
@@ -130,7 +156,7 @@ const reportAccessRequestService = {
    * Approve demande (direction/admin)
    */
   async approve({ requestId, reviewer, io }) {
-    if (!["direction", "admin"].includes(reviewer.role)) {
+    if (![ "DG", "ADMIN"].includes(reviewer.role)) {
       throw new ForbiddenError("Accès refusé");
     }
 
@@ -141,10 +167,10 @@ const reportAccessRequestService = {
       requestId,
       reviewer.id,
     );
-    if (!updated)
+    if (!updated) {
       throw new ConflictError("Demande déjà traitée ou introuvable");
+    }
 
-    // Audit
     await db.query(
       `INSERT INTO audit_logs (user_id, action, entity_type, entity_id, details)
        VALUES ($1, $2, $3, $4, $5)`,
@@ -157,7 +183,6 @@ const reportAccessRequestService = {
       ],
     );
 
-    // Notifier requester (DB + realtime)
     await db.query(
       `INSERT INTO notifications (user_id, type, title, message, link)
        VALUES ($1,$2,$3,$4,$5)`,
@@ -184,8 +209,8 @@ const reportAccessRequestService = {
   /**
    * Reject demande (direction/admin)
    */
-  async reject({ requestId, reviewer, io }) {
-    if (!["direction", "admin"].includes(reviewer.role)) {
+  async reject({ requestId, reviewer, io, rejectionReason = null }) {
+    if (![ "DG", "ADMIN"].includes(reviewer.role)) {
       throw new ForbiddenError("Accès refusé");
     }
 
@@ -195,11 +220,12 @@ const reportAccessRequestService = {
     const updated = await reportAccessRequestModel.reject(
       requestId,
       reviewer.id,
+      rejectionReason,
     );
-    if (!updated)
+    if (!updated) {
       throw new ConflictError("Demande déjà traitée ou introuvable");
+    }
 
-    // Audit
     await db.query(
       `INSERT INTO audit_logs (user_id, action, entity_type, entity_id, details)
        VALUES ($1, $2, $3, $4, $5)`,
@@ -208,11 +234,10 @@ const reportAccessRequestService = {
         "REJECT_REPORT_ACCESS",
         "report_access_request",
         requestId,
-        JSON.stringify({ reportId: reqRow.report_id }),
+        JSON.stringify({ reportId: reqRow.report_id, rejectionReason }),
       ],
     );
 
-    // Notifier requester (DB + realtime)
     await db.query(
       `INSERT INTO notifications (user_id, type, title, message, link)
        VALUES ($1,$2,$3,$4,$5)`,
@@ -237,31 +262,35 @@ const reportAccessRequestService = {
   },
 
   /**
-   * Check accès lecture (utilisé par reportService/reportController)
+   * Vérifie si l'utilisateur peut lire le rapport
    */
   async canReadReport({ reportId, user }) {
-    // direction/admin => ok
-    if (["direction", "admin"].includes(user.role)) return true;
+    // 1) Direction/admin => accès direct
+    if ([ "DG", "ADMIN"].includes(user.role)) {
+      return true;
+    }
 
+    // 2) Charger rapport
     const reportRes = await db.query(
-      `SELECT id, department_id, visibility FROM reports WHERE id = $1`,
+      `SELECT id, user_id, department_id, visibility FROM reports WHERE id = $1`,
       [reportId],
     );
+
     if (reportRes.rowCount === 0) return false;
 
     const report = reportRes.rows[0];
 
-    // même dept => ok
+    // 3) Auteur => accès direct
+    if (report.user_id === user.id) return true;
+
+    // 4) Même département => accès direct
     if (report.department_id === user.department_id) return true;
 
-    // si private => non
+    // 5) Private => refus
     if (report.visibility !== "public") return false;
 
-    // public + demande approuvée
-    return reportAccessRequestModel.hasApprovedAccess(
-      reportId,
-      user.department_id,
-    );
+    // 6) Public + demande approuvée (USER)
+    return reportAccessRequestModel.hasApprovedAccess(reportId, user.id);
   },
 };
 

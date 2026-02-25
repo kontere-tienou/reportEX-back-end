@@ -14,10 +14,7 @@ const { HTTP_STATUS } = require("../config/constants");
  */
 
 const departmentController = {
-  /**
-   * Get all departments
-   * GET /api/departments
-   */
+
   async getAllDepartments(req, res) {
     try {
       const { is_active, search } = req.query;
@@ -43,10 +40,7 @@ const departmentController = {
     }
   },
 
-  /**
-   * Get single department
-   * GET /api/departments/:id
-   */
+
   async getDepartment(req, res) {
     try {
       const { id } = req.params;
@@ -67,11 +61,23 @@ const departmentController = {
       );
     }
   },
+// get users of a department
+  async getDepartmentUsers(req, res) {
+    try {
+      const { id } = req.params;
 
-  /**
-   * Create department
-   * POST /api/departments
-   */
+      const users = await Department.getDepartmentUsers(id);
+
+      return successResponse(res, { users }, "Utilisateurs du département récupérés");
+    } catch (error) {
+      console.error("Get department users error:", error);
+      return errorResponse(
+        res,
+        "Erreur lors de la récupération des utilisateurs du département",
+        HTTP_STATUS.INTERNAL_ERROR,
+      );
+    }
+  },
   async createDepartment(req, res) {
     try {
       const { code, name, icon, color, description, manager_id } = req.body;
@@ -123,10 +129,6 @@ const departmentController = {
     }
   },
 
-  /**
-   * Update department
-   * PUT /api/departments/:id
-   */
   async updateDepartment(req, res) {
     try {
       const { id } = req.params;
@@ -180,10 +182,7 @@ const departmentController = {
     }
   },
 
-  /**
-   * Delete department
-   * DELETE /api/departments/:id
-   */
+ 
   async deleteDepartment(req, res) {
     try {
       const { id } = req.params;
@@ -220,10 +219,7 @@ const departmentController = {
     }
   },
 
-  /**
-   * Get department statistics
-   * GET /api/departments/:id/stats
-   */
+ 
   async getDepartmentStats(req, res) {
     try {
       const { id } = req.params;

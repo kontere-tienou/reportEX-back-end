@@ -2,12 +2,11 @@ const express = require("express");
 const router = express.Router();
 
 const controller = require("../controllers/dashboardController");
-const authMiddleware = require("../middleware/authMiddleware");
-const authorizeRoles = require("../middleware/authorizeRoles");
+const { authenticate, authorize } = require("../middleware/auth");
 
 router.get(
   "/direction",
-  authorizeRoles("direction", "admin"),
+  authorize("DG", "ADMIN"),
   controller.getDirectionDashboard,
 );
 

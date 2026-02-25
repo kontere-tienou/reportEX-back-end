@@ -1,36 +1,30 @@
 const express = require("express");
 const router = express.Router();
 const reportController = require("../controllers/reportController");
-const { authMiddleware, authorizeRoles } = require("../middleware/auth");
+const { authenticate, authorize } = require("../middleware/auth");
 
 // 🔐 Toutes les routes protégées
-router.use(authMiddleware);
-
-/*RAPPORTS*/
+router.use(authenticate);
 
 // 🔥 IMPORTANT → pour /api/reports
-router.get(
-  "/",
-  authorizeRoles("direction", "admin"),
-  reportController.getAllReports,
-);
-
+router.get("/", authorize("DG", "ADMIN"), reportController.getAllReports);
 router.get("/my-reports", reportController.getMyReports);
-
 router.get("/:id", reportController.getReportDetails);
-
 router.post("/", reportController.createReport);
-
 router.put("/:id", reportController.updateReport);
-
 router.delete("/:id", reportController.deleteReport);
-
 router.post("/:id/submit", reportController.submitReport);
+router.post("/:id/read", authenticate, reportController.markAsRead);
+router.get("/:id/readers", authenticate, reportController.getReaders);
+router.get("/:id/comments", authenticate, reportController.getComments);
+router.post("/:id/comments", authenticate, reportController.addComment);
+router.post("/:id/annotations", authenticate, reportController.addAnnotation);
+router.get("/:id/export/pdf", authenticate, reportController.exportPdf);
 
 // Validation (direction + admin seulement)
 router.post(
   "/:id/validate",
-  authorizeRoles("direction", "admin"),
+  authorize("DG", "ADMIN"),
   reportController.validateReport,
 );
 
@@ -40,7 +34,7 @@ router.post(
 
 router.get(
   "/stats/:departmentId",
-  authorizeRoles("direction", "admin"),
+  authorize("DG", "ADMIN"),
   reportController.getDepartmentStats,
 );
 

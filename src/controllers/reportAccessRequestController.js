@@ -1,60 +1,136 @@
-const reportAccessRequestService = require("../service/reportAccessRequestService");
+const ReportAccessRequestService = require("../service/reportAccessRequestService");
+const {
+  successResponse,
+  errorResponse,
+  createdResponse,
+} = require("../utils/responseFormatter");
+const { HTTP_STATUS } = require("../config/constants");
+
+/**
+ * ==========================================
+ * REPORT ACCESS REQUEST CONTROLLER
+ * ==========================================
+ */
 
 const reportAccessRequestController = {
-  async requestAccess(req, res, next) {
+  /**
+   * Request access to a report
+   * POST /api/report-access/:reportId/request
+   */
+  async requestAccess(req, res) {
     try {
-      const io = req.app.get("io");
+      const { reportId } = req.params;
+      const { reason } = req.body;
 
-      const request = await reportAccessRequestService.requestAccess({
-        reportId: parseInt(req.params.reportId, 10),
-        user: req.user,
-        io,
-      });
+      if (!reason || !reason.trim()) {
+        return errorResponse(
+          res,
+          "Veuillez indiquer la raison de votre demande",
+          HTTP_STATUS.BAD_REQUEST,
+        );
+      }
 
-      res.status(201).json({ success: true, request });
-    } catch (err) {
-      next(err);
+      const request = await ReportAccessRequestService.requestAccess(
+        parseInt(reportId),
+        req.user.id,
+        reason.trim(),
+      );
+
+      return createdResponse(res, { request }, "Demande d'accès envoyée");
+    } catch (error) {
+      console.error("Request access error:", error);
+
+      if (error.message.includes("déjà en attente")) {
+        return errorResponse(res, error.message, HTTP_STATUS.CONFLICT);
+      }
+
+      return errorResponse(
+        res,
+        "Erreur lors de la demande d'accès",
+        HTTP_STATUS.INTERNAL_ERROR,
+      );
     }
   },
 
-  async listPending(req, res, next) {
+  /**
+   * Get pending access requests
+   * GET /api/report-access/pending
+   */
+  async getPendingRequests(req, res) {
     try {
-      const requests = await reportAccessRequestService.listPending();
-      res.json({ success: true, requests });
-    } catch (err) {
-      next(err);
+      const requests = await ReportAccessRequestService.getPendingRequests(
+        req.user.id,
+        req.user.role,
+      );
+
+      return successResponse(res, { requests }, "Demandes récupérées");
+    } catch (error) {
+      console.error("Get pending requests error:", error);
+      return errorResponse(
+        res,
+        "Erreur lors de la récupération des demandes",
+        HTTP_STATUS.INTERNAL_ERROR,
+      );
     }
   },
 
-  async approve(req, res, next) {
+  /**
+   * Approve access request
+   * POST /api/report-access/:id/approve
+   */
+  async approveRequest(req, res) {
     try {
-      const io = req.app.get("io");
+      const { id } = req.params;
 
-      const updated = await reportAccessRequestService.approve({
-        requestId: parseInt(req.params.id, 10),
-        reviewer: req.user,
-        io,
-      });
+      const request = await ReportAccessRequestService.approveRequest(
+        parseInt(id),
+        req.user.id,
+      );
 
-      res.json({ success: true, request: updated });
-    } catch (err) {
-      next(err);
+      return successResponse(res, { request }, "Accès accordé");
+    } catch (error) {
+      console.error("Approve request error:", error);
+
+      if (error.message.includes("non trouvée")) {
+        return errorResponse(res, error.message, HTTP_STATUS.NOT_FOUND);
+      }
+
+      return errorResponse(
+        res,
+        "Erreur lors de l'approbation",
+        HTTP_STATUS.INTERNAL_ERROR,
+      );
     }
   },
 
-  async reject(req, res, next) {
+  /**
+   * Reject access request
+   * POST /api/report-access/:id/reject
+   */
+  async rejectRequest(req, res) {
     try {
-      const io = req.app.get("io");
+      const { id } = req.params;
+      const { reason } = req.body;
 
-      const updated = await reportAccessRequestService.reject({
-        requestId: parseInt(req.params.id, 10),
-        reviewer: req.user,
-        io,
-      });
+      const request = await ReportAccessRequestService.rejectRequest(
+        parseInt(id),
+        req.user.id,
+        reason?.trim() || null,
+      );
 
-      res.json({ success: true, request: updated });
-    } catch (err) {
-      next(err);
+      return successResponse(res, { request }, "Demande rejetée");
+    } catch (error) {
+      console.error("Reject request error:", error);
+
+      if (error.message.includes("non trouvée")) {
+        return errorResponse(res, error.message, HTTP_STATUS.NOT_FOUND);
+      }
+
+      return errorResponse(
+        res,
+        "Erreur lors du rejet",
+        HTTP_STATUS.INTERNAL_ERROR,
+      );
     }
   },
 };

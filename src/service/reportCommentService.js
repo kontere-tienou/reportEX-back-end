@@ -2,7 +2,7 @@ const db = require("../config/database");
 const reportCommentModel = require("../models/reportCommentModel");
 const reportAccessRequestService = require("./reportAccessRequestService");
 
-const { NotFoundError, ForbiddenError } = require("../utils/errorHandler");
+const { NotFoundError, ForbiddenError } = require("../middleware/errorHandler");
 
 const reportCommentService = {
   /**
