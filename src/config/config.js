@@ -33,8 +33,11 @@ module.exports = {
 
   // CORS
   cors: {
-    origin: process.env.ALLOWED_ORIGINS?.split(",") || [
+    /*origin: process.env.ALLOWED_ORIGINS?.split(",") || [
       "http://localhost:5173",
+    ],*/
+    origin: process.env.ALLOWED_ORIGINS?.split(",") || [
+      "https://f746-154-118-146-238.ngrok-free.app",
     ],
     credentials: true,
   },
@@ -76,7 +79,7 @@ module.exports = {
 
   // Rate Limiting
   rateLimit: {
-    windowMs: parseInt(process.env.RATE_LIMIT_WINDOW) * 60 * 1000 || 900000, 
+    windowMs: parseInt(process.env.RATE_LIMIT_WINDOW) * 60 * 1000 || 900000,
     maxRequests: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS) || 100,
   },
 
