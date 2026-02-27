@@ -2,7 +2,7 @@ const db = require("../config/database");
 
 /**
  * ==========================================
- * REPORT MODEL
+ * REPORT MODEL - FIXED VISIBILITY
  * ==========================================
  */
 
@@ -20,6 +20,28 @@ class Report {
       visibility = "private",
     } = data;
 
+    // ✅ FIX: Ensure visibility is a STRING, not array
+    let visibilityValue = visibility;
+
+    // If array received (from old frontend), take first value
+    if (Array.isArray(visibility)) {
+      visibilityValue = visibility[0] || "private";
+      console.warn(
+        "⚠️ Received array for visibility, using first value:",
+        visibilityValue,
+      );
+    }
+
+    // Validate visibility value
+    if (!["private", "department", "public"].includes(visibilityValue)) {
+      console.warn(
+        "⚠️ Invalid visibility value:",
+        visibilityValue,
+        '- using default "private"',
+      );
+      visibilityValue = "private";
+    }
+
     const result = await db.query(
       `INSERT INTO reports (
         user_id, department_id, period_start, period_end,
@@ -33,7 +55,7 @@ class Report {
         period_start,
         period_end,
         JSON.stringify(reportData),
-        visibility,
+        visibilityValue, // STRING not JSON
       ],
     );
 
@@ -122,6 +144,8 @@ class Report {
       params.push(`%${search}%`);
       paramCount++;
     }
+
+    // Get total count
     const countQuery = `
       SELECT COUNT(*) as total
       FROM reports r
@@ -129,6 +153,7 @@ class Report {
       JOIN departments d ON r.department_id = d.id
       WHERE 1=1
     `;
+
     const countParams = [];
     let countParamCount = 1;
     let countWhereClause = "";
@@ -167,7 +192,7 @@ class Report {
     const countResult = await db.query(finalCountQuery, countParams);
     const total = countResult.rows[0] ? parseInt(countResult.rows[0].total) : 0;
 
-
+    // Add pagination
     query += ` ORDER BY r.created_at DESC LIMIT $${paramCount} OFFSET $${paramCount + 1}`;
     params.push(limit, offset);
 
@@ -183,83 +208,6 @@ class Report {
       },
     };
   }
-  /*static async findAll(filters = {}) {
-    const {
-      page = 1,
-      limit = 20,
-      user_id,
-      department_id,
-      status,
-      visibility,
-      search,
-    } = filters;
-
-    const offset = (page - 1) * limit;
-    const params = [];
-    let paramCount = 1;
-
-    let query = `
-      SELECT r.*,
-             u.full_name AS author_name,
-             d.name AS department_name,
-             d.code AS department_code
-      FROM reports r
-      JOIN users u ON r.user_id = u.id
-      JOIN departments d ON r.department_id = d.id
-      WHERE 1=1
-    `;
-
-    if (user_id) {
-      query += ` AND r.user_id = $${paramCount}`;
-      params.push(user_id);
-      paramCount++;
-    }
-
-    if (department_id) {
-      query += ` AND r.department_id = $${paramCount}`;
-      params.push(department_id);
-      paramCount++;
-    }
-
-    if (status) {
-      query += ` AND r.status = $${paramCount}`;
-      params.push(status);
-      paramCount++;
-    }
-
-    if (visibility) {
-      query += ` AND r.visibility = $${paramCount}`;
-      params.push(visibility);
-      paramCount++;
-    }
-
-    if (search) {
-      query += ` AND (d.name ILIKE $${paramCount} OR u.full_name ILIKE $${paramCount})`;
-      params.push(`%${search}%`);
-      paramCount++;
-    }
-
-    // Get total count
-    const countQuery = query.replace(/SELECT.*FROM/, "SELECT COUNT(*) FROM");
-    const countResult = await db.query(countQuery, params);
-    const total = parseInt(countResult.rows[0].count);
-
-    // Add pagination
-    query += ` ORDER BY r.created_at DESC LIMIT $${paramCount} OFFSET $${paramCount + 1}`;
-    params.push(limit, offset);
-
-    const result = await db.query(query, params);
-
-    return {
-      reports: result.rows,
-      pagination: {
-        page,
-        limit,
-        total,
-        totalPages: Math.ceil(total / limit),
-      },
-    };
-  }*/
 
   /**
    * Update report
@@ -274,6 +222,12 @@ class Report {
         if (key === "data") {
           fields.push(`${key} = $${paramCount}`);
           values.push(JSON.stringify(updateData[key]));
+        } else if (key === "visibility") {
+          // Handle visibility as string
+          let vis = updateData[key];
+          if (Array.isArray(vis)) vis = vis[0] || "private";
+          fields.push(`${key} = $${paramCount}`);
+          values.push(vis);
         } else {
           fields.push(`${key} = $${paramCount}`);
           values.push(updateData[key]);
@@ -541,7 +495,6 @@ class Report {
 
     const isAuthor = report.user_id === user.id;
     const isDG = ["DG", "ADMIN"].includes(user.role?.toUpperCase());
-    const sameDept = report.department_id === user.department_id;
 
     const canRead = await Report.canUserRead(reportId, user);
 
