@@ -33,12 +33,12 @@ module.exports = {
 
   // CORS
   cors: {
-    /*origin: process.env.ALLOWED_ORIGINS?.split(",") || [
-      "http://localhost:5173",
-    ],*/
     origin: process.env.ALLOWED_ORIGINS?.split(",") || [
-      "https://f746-154-118-146-238.ngrok-free.app",
+      "http://localhost:5173",
     ],
+    /*origin: process.env.ALLOWED_ORIGINS?.split(",") || [
+      "https://f746-154-118-146-238.ngrok-free.app",
+    ],*/
     credentials: true,
   },
 
