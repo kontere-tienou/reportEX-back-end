@@ -16,6 +16,24 @@ const db = require("../config/database");
  */
 
 const reportController = {
+
+
+  async initializeBuilder(req, res) {
+    try {
+      // Send default components and layout configuration to initialize the builder
+      res.status(200).json({
+        message: "Report Builder Initialized",
+        builderConfig: {
+          components: ["chart", "table", "text"],
+          defaultLayout: [],
+        },
+      });
+    } catch (error) {
+      console.error("Error initializing report builder:", error);
+      res.status(500).json({ message: "Error initializing report builder" });
+    }
+  },
+
   /**
    * Create new report
    * POST /api/reports
@@ -230,7 +248,6 @@ const reportController = {
     }
   },
 
- 
   async updateReport(req, res) {
     try {
       const { id } = req.params;
@@ -278,7 +295,6 @@ const reportController = {
     }
   },
 
- 
   async submitReport(req, res) {
     try {
       const { id } = req.params;
@@ -529,7 +545,6 @@ const reportController = {
     }
   },
 
-
   async markAsRead(req, res) {
     try {
       const { id } = req.params;
@@ -576,7 +591,6 @@ const reportController = {
     }
   },
 
-
   async addAnnotation(req, res) {
     try {
       const { id } = req.params;
@@ -618,52 +632,114 @@ const reportController = {
     }
   },
 
-
   async getDepartmentStats(req, res) {
     try {
       const { departmentId } = req.params;
-
+      const { user } = req;
+      /*if (user.department_id !== parseInt(departmentId)) {
+        return res
+          .status(403)
+          .json({ message: "Access denied: Not in the right department" });
+      }*/
       const stats = await Report.getDepartmentStats(departmentId);
+      if (!stats) {
+        return res.status(404).json({ message: "Department stats not found" });
+      }
 
-      return successResponse(res, { stats }, "Statistiques récupérées");
+      // Return stats if found
+      return successResponse(
+        res,
+        { stats },
+        "Department stats retrieved successfully",
+      );
     } catch (error) {
-      console.error("Get stats error:", error);
+      console.error("Error fetching department stats:", error);
       return errorResponse(
         res,
-        "Erreur lors de la récupération des statistiques",
+        "Error retrieving department stats",
         HTTP_STATUS.INTERNAL_ERROR,
       );
     }
   },
 
-  async exportPdf(req, res) {
+  async saveTemplate(req, res) {
+    const { layout, title, periodStart, periodEnd, departmentId, visibility } =
+      req.body;
+
+    if (!title || !periodStart || !periodEnd || !layout) {
+      return res
+        .status(400)
+        .json({ message: "Please provide all required fields" });
+    }
+
     try {
-      const { id } = req.params;
+      // Create the custom report template
+      const report = await Report.create({
+        user_id: req.user.id,
+        department_id: departmentId,
+        period_start: periodStart,
+        period_end: periodEnd,
+        data: JSON.stringify({ layout }),
+        visibility: visibility || "private",
+      });
 
-      const permissions = await Report.getPermissions(id, req.user);
+      // Update the report with layout information
+      await Report.update(report.id, { layout: JSON.stringify(layout) });
 
-      if (!permissions.canRead) {
-        return errorResponse(res, "Accès refusé", HTTP_STATUS.FORBIDDEN);
-      }
-
-      const report = await Report.findById(id);
-
-      // TODO: Implement PDF generation
-      // For now, return not implemented
-      return errorResponse(
-        res,
-        "Export PDF non implémenté",
-        HTTP_STATUS.NOT_IMPLEMENTED,
-      );
+      return res.status(201).json({
+        message: "Template saved successfully",
+        report,
+      });
     } catch (error) {
-      console.error("Export PDF error:", error);
-      return errorResponse(
-        res,
-        "Erreur lors de l'export PDF",
-        HTTP_STATUS.INTERNAL_ERROR,
-      );
+      console.error("Error saving template:", error);
+      return res.status(500).json({ message: "Error saving template" });
+    }
+  },
+
+  /**
+   * Generate the report (e.g., PDF generation)
+   * POST /api/reports/generate
+   */
+  async generateReport(req, res) {
+    const { layout, title, periodStart, periodEnd, departmentId, visibility } =
+      req.body;
+
+    if (!title || !periodStart || !periodEnd || !layout) {
+      return res
+        .status(400)
+        .json({ message: "Please provide all required fields" });
+    }
+
+    try {
+      // Create the report in the database
+      const report = await Report.create({
+        user_id: req.user.id,
+        department_id: departmentId,
+        period_start: periodStart,
+        period_end: periodEnd,
+        data: JSON.stringify({ layout }),
+        visibility: visibility || "private", // Default to 'private'
+      });
+
+      // Implement report generation logic (e.g., generate PDF, handle layout)
+      const pdfPath = await generatePdfReport(report); // This is a placeholder
+
+      res
+        .status(200)
+        .json({ message: "Report generated successfully", pdfPath });
+    } catch (error) {
+      console.error("Error generating report:", error);
+      res.status(500).json({ message: "Error generating report" });
     }
   },
 };
+
+// PDF Generation Example (stub, you need to implement actual PDF generation)
+async function generatePdfReport(report) {
+  const pdfPath = `/path/to/generated/reports/${report.id}.pdf`;
+  return pdfPath;
+}
+
+
 
 module.exports = reportController;

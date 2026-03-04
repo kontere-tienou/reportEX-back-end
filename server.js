@@ -72,6 +72,16 @@ if (config.server.env !== "test") {
 app.use(generalLimiter);
 app.use("/uploads", express.static("uploads"));
 
+
+app.get("/api/reports/builder", async (req, res) => {
+  try {
+    res.status(200).json({ message: "Report Builder Initialized" });
+  } catch (error) {
+    console.error("Error initializing report builder:", error);
+    res.status(500).json({ message: "Error initializing report builder" });
+  }
+});
+
 /**
  * ==========================================
  * CONFIGURATION DES ROUTES
