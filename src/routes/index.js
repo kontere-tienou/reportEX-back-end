@@ -14,6 +14,8 @@ const dashboardRoutes = require("./dashboardRoutes");
 const managementRoutes = require("./namagmentRoutes");
 const reportAccessRoutes = require("./reportAccessRequestRoutes");
 const reportRoutes = require("./reportRoutes");
+const departmentDataRoutes = require("./departmentDataRoutes");
+const schemaRoutes = require("./schemaRoutes");
 //const reportHistoryRoutes = require("./reportHistoryRoutes");
 
 /**
@@ -40,6 +42,8 @@ const configureRoutes = (app) => {
   app.use("/api/management", managementRoutes);
   app.use("/api/report-access", reportAccessRoutes);
   app.use("/api/reports", reportRoutes);
+  app.use("/api/:deptCode/data", departmentDataRoutes);
+  app.use("/api/schemas", schemaRoutes);
   //app.use("/api/report-history", reportHistoryRoutes);
 
   // 404 handler - must be after all routes
