@@ -19,7 +19,7 @@ class DepartmentData {
       PRODUCTION: "production_data",
       IT: "it_data",
       RH: "rh_data",
-      ACHAT: "achat_data",
+      ACHATS: "achat_data",
       BUREAU_ETUDE: "bureau_etude_data",
       COMMERCIAL: "commercial_data",
       COMPTABILITE: "comptabilite_data",

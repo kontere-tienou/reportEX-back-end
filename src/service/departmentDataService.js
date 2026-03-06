@@ -1,17 +1,256 @@
 const DepartmentData = require("../models/DepartmentData");
 const { ValidationError } = require("../middleware/errorHandler");
-const {
-  getDepartmentSchema,
-} = require("../config/departmentSchema");
+const { getDepartmentSchema } = require("../config/departmentSchema");
 
 /**
  * ==========================================
- * DEPARTMENT DATA SERVICE
- * Validation et logique métier
+ * DEPARTMENT DATA SERVICE WITH CACHING
  * ==========================================
  */
 
 class DepartmentDataService {
+  constructor() {
+    this.cache = new Map();
+    this.CACHE_TTL = {
+      AGGREGATED: 2 * 60 * 1000, // 2 minutes
+      STATS: 5 * 60 * 1000, // 5 minutes
+      LIST: 30 * 1000, // 30 seconds
+    };
+  }
+
+  /**
+   * Generate cache key
+   */
+  _getCacheKey(prefix, deptCode, options = {}, userId = null) {
+    return `${prefix}_${deptCode}_${userId || "all"}_${JSON.stringify(options)}`;
+  }
+
+  /**
+   * Get from cache or execute
+   */
+  async _cached(prefix, deptCode, ttl, options = {}, userId = null, fn) {
+    const cacheKey = this._getCacheKey(prefix, deptCode, options, userId);
+
+    // Check cache
+    if (this.cache.has(cacheKey)) {
+      const cached = this.cache.get(cacheKey);
+      if (Date.now() - cached.timestamp < ttl) {
+        console.log(`✅ Cache hit for ${cacheKey}`);
+        return cached.data;
+      }
+      console.log(`🔄 Cache expired for ${cacheKey}`);
+      this.cache.delete(cacheKey);
+    }
+
+    // Execute function
+    console.log(`🆕 Cache miss for ${cacheKey}, fetching fresh data`);
+    const data = await fn();
+
+    // Store in cache
+    this.cache.set(cacheKey, {
+      data,
+      timestamp: Date.now(),
+    });
+
+    return data;
+  }
+
+  /**
+   * Clear cache entries for a department
+   */
+  clearCache(deptCode) {
+    console.log(`🧹 Clearing cache for department: ${deptCode}`);
+    for (const key of this.cache.keys()) {
+      if (key.includes(deptCode)) {
+        this.cache.delete(key);
+      }
+    }
+  }
+
+  /**
+   * Get all data with caching
+   */
+  async getAll(deptCode, options = {}, userId = null) {
+    return this._cached(
+      "LIST",
+      deptCode,
+      this.CACHE_TTL.LIST,
+      options,
+      userId,
+      async () => {
+        console.log("Service getAll called with:", {
+          deptCode,
+          options,
+          userId,
+        });
+        const { page, limit, dateFrom, dateTo, sortBy, sortOrder } = options;
+
+        // Validate date range
+        if (dateFrom && dateTo) {
+          const daysDiff = this._getDaysDiff(dateFrom, dateTo);
+          if (daysDiff > 90) {
+            throw new Error("La période ne peut pas dépasser 90 jours");
+          }
+        }
+
+        const result = await DepartmentData.findAll(deptCode, {
+          page: page ? parseInt(page) : undefined,
+          limit: limit ? parseInt(limit) : undefined,
+          dateFrom,
+          dateTo,
+          userId,
+          sortBy,
+          sortOrder,
+        });
+
+        return result;
+      },
+    );
+  }
+
+  /**
+   * Get aggregated data with caching
+   */
+  async getAggregated(deptCode, options = {}) {
+    return this._cached(
+      "AGGREGATED",
+      deptCode,
+      this.CACHE_TTL.AGGREGATED,
+      options,
+      null,
+      async () => {
+        console.log("Getting aggregated data for:", deptCode, options);
+
+        // Validate and limit options
+        const { dateFrom, dateTo, groupBy, metrics = [] } = options;
+
+        // Limit date range
+        if (dateFrom && dateTo) {
+          const daysDiff = this._getDaysDiff(dateFrom, dateTo);
+          if (daysDiff > 90) {
+            throw new Error("La période ne peut pas dépasser 90 jours");
+          }
+        }
+
+        // Limit number of metrics
+        const safeMetrics = Array.isArray(metrics) ? metrics.slice(0, 5) : [];
+
+        return await DepartmentData.getAggregated(deptCode, {
+          dateFrom,
+          dateTo,
+          groupBy,
+          metrics: safeMetrics,
+        });
+      },
+    );
+  }
+
+  /**
+   * Get statistics with caching
+   */
+  async getStats(deptCode, userId = null) {
+    return this._cached(
+      "STATS",
+      deptCode,
+      this.CACHE_TTL.STATS,
+      {},
+      userId,
+      async () => {
+        return await DepartmentData.getStats(deptCode, userId);
+      },
+    );
+  }
+
+  /**
+   * Calculate days difference between two dates
+   */
+  _getDaysDiff(dateFrom, dateTo) {
+    const start = new Date(dateFrom);
+    const end = new Date(dateTo);
+    return Math.ceil((end - start) / (1000 * 60 * 60 * 24));
+  }
+
+  /**
+   * Create new data entry - clears cache
+   */
+  async create(deptCode, data, userId) {
+    try {
+      console.log("Service create called with:", { deptCode, data, userId });
+
+      // Validate data against schema
+      const schema = getDepartmentSchema(deptCode);
+
+      // Check required fields
+      const requiredFields = schema.fields.filter((f) => f.required);
+      for (const field of requiredFields) {
+        if (!data[field.key] && data[field.key] !== 0) {
+          throw new Error(`Le champ "${field.label}" est requis`);
+        }
+      }
+
+      // Add user_id to data
+      const dataWithUser = {
+        ...data,
+        user_id: userId,
+      };
+
+      // Create in database
+      const newData = await DepartmentData.create(deptCode, dataWithUser);
+
+      // Clear cache for this department
+      this.clearCache(deptCode);
+
+      return newData;
+    } catch (error) {
+      console.error("Service create error:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Update data entry - clears cache
+   */
+  async update(deptCode, id, data, userId) {
+    // Check existence
+    const existing = await DepartmentData.findById(deptCode, id);
+    if (!existing) {
+      throw new Error("Donnée non trouvée");
+    }
+
+    // Validate
+    this.validateData(deptCode, data);
+
+    // Prepare
+    const preparedData = this.prepareData(deptCode, data, userId);
+
+    // Update
+    const updated = await DepartmentData.update(deptCode, id, preparedData);
+
+    // Clear cache
+    this.clearCache(deptCode);
+
+    return updated;
+  }
+
+  /**
+   * Delete data entry - clears cache
+   */
+  async delete(deptCode, id, userId) {
+    // Check existence
+    const existing = await DepartmentData.findById(deptCode, id);
+    if (!existing) {
+      throw new Error("Donnée non trouvée");
+    }
+
+    // Delete
+    const deleted = await DepartmentData.delete(deptCode, id);
+
+    // Clear cache
+    this.clearCache(deptCode);
+
+    return deleted;
+  }
+
   /**
    * Validate data against schema
    */
@@ -21,12 +260,12 @@ class DepartmentDataService {
 
     // Check required fields
     schema.fields.forEach((field) => {
-      if (field.required && !data[field.key]) {
+      if (field.required && !data[field.key] && data[field.key] !== 0) {
         errors.push(`Le champ "${field.label}" est requis`);
       }
 
       // Type validation
-      if (data[field.key]) {
+      if (data[field.key] !== undefined && data[field.key] !== null) {
         if (field.type === "number" && isNaN(parseFloat(data[field.key]))) {
           errors.push(`Le champ "${field.label}" doit être un nombre`);
         }
@@ -88,33 +327,6 @@ class DepartmentDataService {
   }
 
   /**
-   * Get all data with filters
-   */
-  async getAll(deptCode, options = {}, userId = null) {
-    try {
-      console.log("Service getAll called with:", { deptCode, options, userId });
-
-      const { page, limit, dateFrom, dateTo, sortBy, sortOrder } = options;
-
-      const result = await DepartmentData.findAll(deptCode, {
-        page,
-        limit,
-        dateFrom,
-        dateTo,
-        userId,
-        sortBy,
-        sortOrder,
-      });
-
-      console.log("Service result:", result);
-      return result;
-    } catch (error) {
-      console.error("Service getAll error:", error);
-      throw error;
-    }
-  }
-
-  /**
    * Get single data entry
    */
   async getById(deptCode, id) {
@@ -123,93 +335,6 @@ class DepartmentDataService {
       throw new Error("Donnée non trouvée");
     }
     return data;
-  }
-
-  /**
-   * Create new data entry
-   */
-  async create(deptCode, data, userId) {
-    try {
-      console.log("Service create called with:", { deptCode, data, userId });
-
-      // Validate data against schema
-      const schema = getDepartmentSchema(deptCode);
-
-      // Check required fields
-      const requiredFields = schema.fields.filter((f) => f.required);
-      for (const field of requiredFields) {
-        if (!data[field.key]) {
-          throw new Error(`Le champ "${field.label}" est requis`);
-        }
-      }
-
-      // Add user_id to data
-      const dataWithUser = {
-        ...data,
-        user_id: userId,
-      };
-
-      // Create in database
-      const newData = await DepartmentData.create(deptCode, dataWithUser);
-
-      console.log("Service create result:", newData);
-      return newData;
-    } catch (error) {
-      console.error("Service create error:", error);
-      throw error;
-    }
-  }
-
-  /**
-   * Update data entry
-   */
-  async update(deptCode, id, data, userId) {
-    // Check existence
-    const existing = await DepartmentData.findById(deptCode, id);
-    if (!existing) {
-      throw new Error("Donnée non trouvée");
-    }
-
-    // Validate
-    this.validateData(deptCode, data);
-
-    // Prepare
-    const preparedData = this.prepareData(deptCode, data, userId);
-
-    // Update
-    const updated = await DepartmentData.update(deptCode, id, preparedData);
-
-    return updated;
-  }
-
-  /**
-   * Delete data entry
-   */
-  async delete(deptCode, id, userId) {
-    // Check existence
-    const existing = await DepartmentData.findById(deptCode, id);
-    if (!existing) {
-      throw new Error("Donnée non trouvée");
-    }
-
-    // Delete
-    const deleted = await DepartmentData.delete(deptCode, id);
-
-    return deleted;
-  }
-
-  /**
-   * Get statistics
-   */
-  async getStats(deptCode, userId = null) {
-    return await DepartmentData.getStats(deptCode, userId);
-  }
-
-  /**
-   * Get aggregated data
-   */
-  async getAggregated(deptCode, options = {}) {
-    return await DepartmentData.getAggregated(deptCode, options);
   }
 
   /**

@@ -42,7 +42,7 @@ const configureRoutes = (app) => {
   app.use("/api/management", managementRoutes);
   app.use("/api/report-access", reportAccessRoutes);
   app.use("/api/reports", reportRoutes);
-  app.use("/api/:deptCode/data", departmentDataRoutes);
+  app.use("/api", departmentDataRoutes);
   app.use("/api/schemas", schemaRoutes);
   //app.use("/api/report-history", reportHistoryRoutes);
 

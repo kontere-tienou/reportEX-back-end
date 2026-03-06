@@ -534,7 +534,7 @@ const DEPARTMENT_DATA_SCHEMAS = {
     ],
   },
 
-  ACHAT: {
+  ACHATS: {
     endpoint: "/api/achat-data",
     tableName: "achat_data",
     fields: [
@@ -892,33 +892,7 @@ const DEPARTMENT_DATA_SCHEMAS = {
     ],
   },
 
-  DEFAULT: {
-    endpoint: "/api/department-data",
-    tableName: "department_data",
-    fields: [
-      { key: "date", label: "Date", type: "date", required: true },
-      {
-        key: "indicateur_1",
-        label: "Indicateur Principal",
-        type: "number",
-        required: true,
-        min: 0,
-      },
-      {
-        key: "indicateur_2",
-        label: "Indicateur Secondaire",
-        type: "number",
-        required: false,
-        min: 0,
-      },
-      {
-        key: "observations",
-        label: "Observations",
-        type: "textarea",
-        required: false,
-      },
-    ],
-  },
+
 };
 
 /**
@@ -926,7 +900,7 @@ const DEPARTMENT_DATA_SCHEMAS = {
  */
 const getDepartmentSchema = (deptCode) => {
   const code = deptCode?.toUpperCase().replace(/\s+/g, "_") || "DEFAULT";
-  return DEPARTMENT_DATA_SCHEMAS[code] || DEPARTMENT_DATA_SCHEMAS.DEFAULT;
+  return DEPARTMENT_DATA_SCHEMAS[code];
 };
 
 /**
