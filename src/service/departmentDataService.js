@@ -25,9 +25,6 @@ class DepartmentDataService {
     return `${prefix}_${deptCode}_${userId || "all"}_${JSON.stringify(options)}`;
   }
 
-  /**
-   * Get from cache or execute
-   */
   async _cached(prefix, deptCode, ttl, options = {}, userId = null, fn) {
     const cacheKey = this._getCacheKey(prefix, deptCode, options, userId);
 
@@ -55,9 +52,6 @@ class DepartmentDataService {
     return data;
   }
 
-  /**
-   * Clear cache entries for a department
-   */
   clearCache(deptCode) {
     console.log(`🧹 Clearing cache for department: ${deptCode}`);
     for (const key of this.cache.keys()) {
@@ -67,9 +61,6 @@ class DepartmentDataService {
     }
   }
 
-  /**
-   * Get all data with caching
-   */
   async getAll(deptCode, options = {}, userId = null) {
     return this._cached(
       "LIST",
@@ -108,9 +99,6 @@ class DepartmentDataService {
     );
   }
 
-  /**
-   * Get aggregated data with caching
-   */
   async getAggregated(deptCode, options = {}) {
     return this._cached(
       "AGGREGATED",
@@ -145,9 +133,6 @@ class DepartmentDataService {
     );
   }
 
-  /**
-   * Get statistics with caching
-   */
   async getStats(deptCode, userId = null) {
     return this._cached(
       "STATS",
@@ -161,18 +146,12 @@ class DepartmentDataService {
     );
   }
 
-  /**
-   * Calculate days difference between two dates
-   */
   _getDaysDiff(dateFrom, dateTo) {
     const start = new Date(dateFrom);
     const end = new Date(dateTo);
     return Math.ceil((end - start) / (1000 * 60 * 60 * 24));
   }
 
-  /**
-   * Create new data entry - clears cache
-   */
   async create(deptCode, data, userId) {
     try {
       console.log("Service create called with:", { deptCode, data, userId });
@@ -207,9 +186,6 @@ class DepartmentDataService {
     }
   }
 
-  /**
-   * Update data entry - clears cache
-   */
   async update(deptCode, id, data, userId) {
     // Check existence
     const existing = await DepartmentData.findById(deptCode, id);
@@ -232,9 +208,6 @@ class DepartmentDataService {
     return updated;
   }
 
-  /**
-   * Delete data entry - clears cache
-   */
   async delete(deptCode, id, userId) {
     // Check existence
     const existing = await DepartmentData.findById(deptCode, id);
@@ -251,9 +224,6 @@ class DepartmentDataService {
     return deleted;
   }
 
-  /**
-   * Validate data against schema
-   */
   validateData(deptCode, data) {
     const schema = getDepartmentSchema(deptCode);
     const errors = [];
@@ -299,9 +269,6 @@ class DepartmentDataService {
     return true;
   }
 
-  /**
-   * Prepare data for storage
-   */
   prepareData(deptCode, data, userId) {
     const prepared = { ...data, user_id: userId };
 
@@ -326,9 +293,6 @@ class DepartmentDataService {
     return prepared;
   }
 
-  /**
-   * Get single data entry
-   */
   async getById(deptCode, id) {
     const data = await DepartmentData.findById(deptCode, id);
     if (!data) {
@@ -337,17 +301,11 @@ class DepartmentDataService {
     return data;
   }
 
-  /**
-   * Export data
-   */
   async exportData(deptCode, options = {}) {
     const data = await DepartmentData.exportData(deptCode, options);
     return data;
   }
 
-  /**
-   * Generate CSV from data
-   */
   generateCSV(data) {
     if (!data || data.length === 0) {
       return "";
@@ -381,6 +339,54 @@ class DepartmentDataService {
 
     return csvRows.join("\n");
   }
-}
 
+  async getMetric(deptCode, field, calculation, options = {}) {
+    const metrics = [
+      {
+        field,
+        calculation,
+      },
+    ];
+
+    const result = await this.getAggregated(deptCode, {
+      ...options,
+      metrics,
+    });
+
+    if (!result || result.length === 0) {
+      return 0;
+    }
+
+    const key = `${calculation}_${field}`;
+
+    return result[0][key] ?? 0;
+  }
+
+  async getChartData(deptCode, config, options = {}) {
+    const { fields, groupBy = "date" } = config;
+
+    const metrics = fields.map((f) => ({
+      field: f,
+      calculation: "sum",
+    }));
+
+    const result = await this.getAggregated(deptCode, {
+      ...options,
+      groupBy,
+      metrics,
+    });
+
+    return result || [];
+  }
+
+  async getTableData(deptCode, options = {}) {
+    const result = await this.getAll(deptCode, {
+      limit: options.limit || 10,
+      dateFrom: options.dateFrom,
+      dateTo: options.dateTo,
+    });
+
+    return result?.data || [];
+  }
+}
 module.exports = new DepartmentDataService();

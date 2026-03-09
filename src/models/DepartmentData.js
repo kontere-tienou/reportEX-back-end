@@ -194,7 +194,7 @@ class DepartmentData {
       values.push(otherFields[key]);
     });
 
-    values.push(id); 
+    values.push(id);
 
     const query = `
       UPDATE ${tableName}
@@ -300,22 +300,62 @@ class DepartmentData {
     const { dateFrom, dateTo, groupBy = "date", metrics = [] } = options;
     const tableName = this.getTableName(deptCode);
 
+    // First, get existing columns in the table
+    const columnsResult = await db.query(
+      `SELECT column_name 
+         FROM information_schema.columns 
+         WHERE table_name = $1`,
+      [tableName],
+    );
+
+    const existingColumns = columnsResult.rows.map((row) => row.column_name);
+    console.log(`Existing columns in ${tableName}:`, existingColumns);
+
+    // Filter metrics to only those with existing columns
+    const validMetrics = metrics.filter((m) =>
+      existingColumns.includes(m.field),
+    );
+
+    if (validMetrics.length === 0) {
+      // No valid metrics, return empty result with just the groupBy
+      const result = await db.query(
+        `SELECT ${groupBy} FROM ${tableName} 
+             WHERE 1=1 
+             ${dateFrom ? "AND date >= $1" : ""} 
+             ${dateTo ? "AND date <= $2" : ""} 
+             GROUP BY ${groupBy} 
+             ORDER BY ${groupBy} DESC`,
+        dateFrom && dateTo
+          ? [dateFrom, dateTo]
+          : dateFrom
+            ? [dateFrom]
+            : dateTo
+              ? [dateTo]
+              : [],
+      );
+      return result.rows;
+    }
+
+    // Build query only with valid metrics
     let query = `SELECT ${groupBy}, `;
-    const aggregates = metrics
+    const calc = m.calculation || m.aggregation || "sum";
+    const aggregates = validMetrics
       .map((m) => {
-        switch (m.aggregation) {
+        switch (
+          calc 
+        ) {
           case "sum":
-            return `SUM(${m.field}) as ${m.field}_sum`;
+            return `COALESCE(SUM(${m.field}), 0) as "${m.field}_sum"`;
           case "avg":
-            return `AVG(${m.field}) as ${m.field}_avg`;
+            return `COALESCE(AVG(${m.field}), 0) as "${m.field}_avg"`;
           case "min":
-            return `MIN(${m.field}) as ${m.field}_min`;
+            return `COALESCE(MIN(${m.field}), 0) as "${m.field}_min"`;
           case "max":
-            return `MAX(${m.field}) as ${m.field}_max`;
+            return `COALESCE(MAX(${m.field}), 0) as "${m.field}_max"`;
           case "count":
-            return `COUNT(${m.field}) as ${m.field}_count`;
+            return `COUNT(${m.field}) as "${m.field}_count"`;
           default:
-            return `${m.field}`;
+            return `COALESCE(SUM(${m.field}), 0) as "${m.field}_sum"`;
         }
       })
       .join(", ");
@@ -336,6 +376,9 @@ class DepartmentData {
     }
 
     query += ` GROUP BY ${groupBy} ORDER BY ${groupBy} DESC`;
+
+    console.log("Aggregated query:", query);
+    console.log("Params:", params);
 
     const result = await db.query(query, params);
     return result.rows;

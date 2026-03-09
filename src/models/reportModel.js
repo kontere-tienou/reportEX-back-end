@@ -2,7 +2,7 @@ const db = require("../config/database");
 
 /**
  * ==========================================
- * REPORT MODEL - FIXED VISIBILITY
+ * REPORT MODEL - FIXED VISIBILITY AND JSON HANDLING
  * ==========================================
  */
 
@@ -16,8 +16,9 @@ class Report {
       department_id,
       period_start,
       period_end,
-      data: reportData,
+      layout: reportData,
       visibility = "private",
+      title,
     } = data;
 
     // ✅ FIX: Ensure visibility is a STRING, not array
@@ -42,23 +43,61 @@ class Report {
       visibilityValue = "private";
     }
 
+    // IMPORTANT FIX: Ensure reportData is a proper JSON object, not a string
+    let jsonData = reportData;
+
+    // If it's already a string, parse it to ensure it's a proper object
+    if (typeof reportData === "string") {
+      try {
+        jsonData = JSON.parse(reportData);
+      } catch (e) {
+        console.error("Failed to parse reportData string:", e);
+        jsonData = { error: "Invalid JSON", raw: reportData };
+      }
+    }
+
+    // If it's null or undefined, create a default object
+    if (jsonData === null || jsonData === undefined) {
+      jsonData = {
+        title: `Report ${period_start} - ${period_end}`,
+        layout: [],
+        sourceData: {},
+        generatedAt: new Date().toISOString(),
+      };
+    }
+
+    // Log what we're inserting (for debugging)
+    console.log("Inserting report with data keys:", Object.keys(jsonData));
+
+    // CRITICAL FIX: Pass the JSON object directly, NOT stringified
+    // PostgreSQL driver will handle JSON conversion automatically
     const result = await db.query(
       `INSERT INTO reports (
-        user_id, department_id, period_start, period_end,
-        data, visibility, status, created_at, updated_at
+        user_id,
+        department_id,
+        period_start,
+        period_end,
+        title,
+        data,
+        visibility,
+        status,
+        created_at,
+        updated_at
       )
-      VALUES ($1, $2, $3, $4, $5, $6, 'brouillon', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,'brouillon',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
       RETURNING *`,
       [
         user_id,
         department_id,
         period_start,
         period_end,
-        JSON.stringify(reportData),
-        visibilityValue, // STRING not JSON
+        title,
+        jsonData,
+        visibilityValue,
       ],
     );
 
+    console.log("Report created successfully with ID:", result.rows[0]?.id);
     return result.rows[0];
   }
 
@@ -220,8 +259,20 @@ class Report {
     Object.keys(updateData).forEach((key) => {
       if (updateData[key] !== undefined && key !== "id") {
         if (key === "data") {
+          // FIX: For updates, also pass the object directly, not stringified
           fields.push(`${key} = $${paramCount}`);
-          values.push(JSON.stringify(updateData[key]));
+          let jsonData = updateData[key];
+
+          // If it's a string, parse it
+          if (typeof jsonData === "string") {
+            try {
+              jsonData = JSON.parse(jsonData);
+            } catch (e) {
+              console.error("Failed to parse update data:", e);
+            }
+          }
+
+          values.push(jsonData); // Pass object directly
         } else if (key === "visibility") {
           // Handle visibility as string
           let vis = updateData[key];
@@ -254,9 +305,9 @@ class Report {
     return result.rows[0];
   }
 
-  /**
-   * Submit report for validation
-   */
+  // Rest of your methods remain the same...
+  // Submit, validate, delete, etc.
+
   static async submit(id, userId) {
     const result = await db.query(
       `UPDATE reports
@@ -273,9 +324,6 @@ class Report {
     return result.rows[0];
   }
 
-  /**
-   * Validate report
-   */
   static async validate(id, validatorId, validationData) {
     const { status, comments } = validationData;
 
@@ -304,9 +352,6 @@ class Report {
     return result.rows[0];
   }
 
-  /**
-   * Delete report
-   */
   static async delete(id, userId) {
     const result = await db.query(
       `DELETE FROM reports
@@ -320,9 +365,6 @@ class Report {
     return result.rows[0];
   }
 
-  /**
-   * Get validations history
-   */
   static async getValidations(reportId) {
     const result = await db.query(
       `SELECT v.*,
@@ -337,9 +379,6 @@ class Report {
     return result.rows;
   }
 
-  /**
-   * Add comment
-   */
   static async addComment(reportId, userId, content) {
     const result = await db.query(
       `INSERT INTO report_comments (report_id, user_id, comment)
@@ -351,9 +390,6 @@ class Report {
     return result.rows[0];
   }
 
-  /**
-   * Get comments
-   */
   static async getComments(reportId) {
     const result = await db.query(
       `SELECT c.*,
@@ -369,9 +405,6 @@ class Report {
     return result.rows;
   }
 
-  /**
-   * Mark as read
-   */
   static async markAsRead(reportId, userId) {
     await db.query(
       `INSERT INTO report_reads (report_id, user_id, read_at)
@@ -382,9 +415,6 @@ class Report {
     );
   }
 
-  /**
-   * Get readers
-   */
   static async getReaders(reportId) {
     const result = await db.query(
       `SELECT rr.*,
@@ -402,9 +432,6 @@ class Report {
     return result.rows;
   }
 
-  /**
-   * Add annotation
-   */
   static async addAnnotation(reportId, userId, annotationData) {
     const { selected_text, comment, decision, range_meta } = annotationData;
 
@@ -427,9 +454,6 @@ class Report {
     return result.rows[0];
   }
 
-  /**
-   * Get annotations
-   */
   static async getAnnotations(reportId) {
     const result = await db.query(
       `SELECT a.*,
@@ -444,9 +468,6 @@ class Report {
     return result.rows;
   }
 
-  /**
-   * Check if user can read report
-   */
   static async canUserRead(reportId, user) {
     const report = await Report.findById(reportId);
 
@@ -475,9 +496,6 @@ class Report {
     return accessResult.rowCount > 0;
   }
 
-  /**
-   * Get user permissions for report
-   */
   static async getPermissions(reportId, user) {
     const report = await Report.findById(reportId);
 
@@ -509,9 +527,6 @@ class Report {
     };
   }
 
-  /**
-   * Get department stats
-   */
   static async getDepartmentStats(departmentId) {
     const result = await db.query(
       `SELECT 

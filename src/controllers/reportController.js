@@ -10,6 +10,7 @@ const { HTTP_STATUS } = require("../config/constants");
 const db = require("../config/database");
 const reportService = require("../service/reportService");
 const reportAccessRequestService = require("../service/reportAccessRequestService");
+const { generateSnapshot } = require("../service/reportSnapshotService");
 
 /**
  * ==========================================
@@ -18,8 +19,6 @@ const reportAccessRequestService = require("../service/reportAccessRequestServic
  */
 
 const reportController = {
-
-
   async initializeBuilder(req, res) {
     try {
       // Send default components and layout configuration to initialize the builder
@@ -36,15 +35,17 @@ const reportController = {
     }
   },
 
-  /**
-   * Create new report
-   * POST /api/reports
-   */
   async createReport(req, res) {
     try {
-      const { period_start, period_end, data, visibility } = req.body;
+      const {
+        period_start,
+        period_end,
+        layout,
+        dateRange,
+        visibility,
+        title, // ← ADD THIS
+      } = req.body;
 
-      // Validation
       if (!period_start || !period_end) {
         return errorResponse(
           res,
@@ -53,10 +54,10 @@ const reportController = {
         );
       }
 
-      if (!data || typeof data !== "object") {
+      if (!layout || !Array.isArray(layout)) {
         return errorResponse(
           res,
-          "Les données du rapport sont invalides",
+          "Le layout du rapport est invalide",
           HTTP_STATUS.BAD_REQUEST,
         );
       }
@@ -69,13 +70,12 @@ const reportController = {
         );
       }
 
-      // Check duplicate period
       const existing = await db.query(
         `SELECT id FROM reports
-         WHERE department_id = $1
-         AND period_start = $2
-         AND period_end = $3
-         AND status != 'rejete'`,
+             WHERE department_id = $1
+             AND period_start = $2
+             AND period_end = $3
+             AND status != 'rejete'`,
         [req.user.department_id, period_start, period_end],
       );
 
@@ -87,53 +87,38 @@ const reportController = {
         );
       }
 
-      // Create report
+      // GENERATE SNAPSHOT
+      const snapshot = await generateSnapshot(
+        layout,
+        req.user.department_id,
+        dateRange,
+      );
+
+      const reportData = {
+        title, 
+        layout,
+        renderedLayout: layout,
+        sourceData: snapshot,
+      };
+
       const report = await Report.create({
         user_id: req.user.id,
         department_id: req.user.department_id,
         period_start,
         period_end,
-        data,
+        layout: reportData,
         visibility: visibility || "private",
       });
 
-      // Audit log
       await AuditLog.create({
         user_id: req.user.id,
         action: "CREATE",
         entity_type: "report",
         entity_id: report.id,
-        details: { period_start, period_end, visibility },
+        details: { period_start, period_end, visibility, title },
         ip_address: req.ip,
         user_agent: req.get("user-agent"),
       });
-
-      // Notify DG
-      const io = req.app.get("io");
-      if (io) {
-        const dgUsers = await db.query(
-          `SELECT id FROM users WHERE role IN ('DG', 'ADMIN') AND is_active = true`,
-        );
-
-        for (const dg of dgUsers.rows) {
-          await db.query(
-            `INSERT INTO notifications (user_id, type, title, message, link)
-             VALUES ($1, $2, $3, $4, $5)`,
-            [
-              dg.id,
-              "report_created",
-              "Nouveau rapport créé",
-              `${req.user.full_name} a créé un nouveau rapport`,
-              `/reports/${report.id}`,
-            ],
-          );
-
-          io.to(`user:${dg.id}`).emit("notification", {
-            type: "report_created",
-            message: `Nouveau rapport de ${req.user.full_name}`,
-          });
-        }
-      }
 
       return createdResponse(res, { report }, "Rapport créé avec succès");
     } catch (error) {
@@ -172,33 +157,27 @@ const reportController = {
   async getAllReports(req, res) {
     try {
       const user = req.user;
-      const {
-        status,
-        search,
-        visibility,
-        department_id,
-        page,
-        limit
-      } = req.query;
-  
+      const { status, search, visibility, department_id, page, limit } =
+        req.query;
+
       const isDG = user?.role?.toUpperCase() === "DG";
-  
+
       const filters = {
         status,
         search,
         page,
         limit,
       };
-  
+
       if (isDG) {
         if (visibility) filters.visibility = visibility;
         if (department_id) filters.department_id = department_id;
       } else {
         filters.visibility = "public";
       }
-  
+
       const reports = await reportService.getAllReports(filters, user);
-  
+
       return res.status(200).json({
         success: true,
         data: {
@@ -218,16 +197,16 @@ const reportController = {
     try {
       const { id } = req.params;
       const user = req.user;
-  
+
       // Charger le rapport avec les joins
       const report = await reportService.getReportDetails(id);
-  
+
       // Vérifier l'accès via le service dédié
       const canRead = await reportAccessRequestService.canReadReport({
         reportId: id,
         user,
       });
-  
+
       if (!canRead) {
         return res.status(403).json({
           success: false,
@@ -237,18 +216,18 @@ const reportController = {
           },
         });
       }
-  
+
       const role = String(user?.role || "").toUpperCase();
       const isDG = ["DG", "ADMIN"].includes(role);
       const isOwner = Number(report.user_id) === Number(user.id);
-  
+
       const permissions = {
         canRead: true,
         canEdit: isOwner && ["brouillon", "rejete"].includes(report.status),
         canDelete: isOwner || isDG,
         canValidate: isDG && report.status === "soumis",
       };
-  
+
       return res.status(200).json({
         success: true,
         data: {
@@ -258,14 +237,14 @@ const reportController = {
       });
     } catch (error) {
       console.error("getReportDetails error:", error);
-  
+
       const status =
         error.statusCode ||
         error.status ||
         (error.name === "NotFoundError" ? 404 : null) ||
         (error.name === "ForbiddenError" ? 403 : null) ||
         500;
-  
+
       return res.status(status).json({
         success: false,
         message: error.message || "Erreur lors du chargement du rapport",
