@@ -265,33 +265,27 @@ const reportAccessRequestService = {
    * Vérifie si l'utilisateur peut lire le rapport
    */
   async canReadReport({ reportId, user }) {
-    // 1) Direction/admin => accès direct
-    if ([ "DG", "ADMIN"].includes(user.role)) {
+    const role = String(user.role || "").toUpperCase();
+  
+    if (["DG", "ADMIN"].includes(role)) {
       return true;
     }
-
-    // 2) Charger rapport
+  
     const reportRes = await db.query(
       `SELECT id, user_id, department_id, visibility FROM reports WHERE id = $1`,
       [reportId],
     );
-
+  
     if (reportRes.rowCount === 0) return false;
-
+  
     const report = reportRes.rows[0];
-
-    // 3) Auteur => accès direct
-    if (report.user_id === user.id) return true;
-
-    // 4) Même département => accès direct
-    if (report.department_id === user.department_id) return true;
-
-    // 5) Private => refus
+  
+    if (Number(report.user_id) === Number(user.id)) return true;
+    if (Number(report.department_id) === Number(user.department_id)) return true;
+  
     if (report.visibility !== "public") return false;
-
-    // 6) Public + demande approuvée (USER)
+  
     return reportAccessRequestModel.hasApprovedAccess(reportId, user.id);
   },
 };
-
 module.exports = reportAccessRequestService;

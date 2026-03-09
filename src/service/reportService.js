@@ -164,7 +164,7 @@ const reportService = {
   /* ===============================
      READ LIST
   =============================== */
-  async getReports(user, filters = {}) {
+  async getAllReports(user, filters = {}) {
     if (user.role === "direction" || user.role === "admin") {
       return db.query(`SELECT * FROM reports ORDER BY created_at DESC`);
     }
@@ -185,7 +185,7 @@ const reportService = {
       reportId,
     ]);
 
-    if (!result.rows.length) throw new NotFoundError("Rapport introuvable");
+    if (!result.rows.length) throw new NotFound("Rapport introuvable");
 
     const report = result.rows[0];
 
@@ -361,14 +361,7 @@ const reportService = {
     }
   },
 
-  /**
-   * Validation (Direction/Admin)
-   * - status -> valide
-   * - validated_by, validated_at
-   * - is_locked = true
-   * - insert validations history (approuve)
-   * - notify author
-   */
+  
   async validateReport(reportId, validatorUser) {
     if (!["direction", "admin", "validateur"].includes(validatorUser.role)) {
       throw new ForbiddenError("Accès refusé");
@@ -439,14 +432,7 @@ const reportService = {
     }
   },
 
-  /**
-   * Rejet (Direction/Admin)
-   * - status -> rejete
-   * - rejection_reason set
-   * - is_locked = false
-   * - insert validations history (rejete)
-   * - notify author
-   */
+
   async rejectReport(reportId, validatorUser, reason) {
     if (!reason || String(reason).trim().length < 3) {
       throw new ValidationError("La raison du rejet est obligatoire");
@@ -569,27 +555,24 @@ const reportService = {
   async getReportDetails(reportId) {
     const result = await db.query(
       `SELECT r.*,
-              t.name as template_name,
-              t.frequency,
               u.full_name as author_name,
               u.email as author_email,
               v.full_name as validator_name,
               d.name as department_name
        FROM reports r
-       JOIN report_templates t ON r.template_id = t.id
        JOIN users u ON r.user_id = u.id
        LEFT JOIN users v ON r.validated_by = v.id
        JOIN departments d ON r.department_id = d.id
        WHERE r.id = $1`,
       [reportId],
     );
-
+  
     if (result.rows.length === 0) {
       throw new NotFoundError("Rapport non trouvé");
     }
-
+  
     return result.rows[0];
-    },
+  },
   
     /* ===============================
     DEMANDE D'ACCÈS

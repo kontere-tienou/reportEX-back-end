@@ -3,44 +3,36 @@ const router = express.Router();
 const reportController = require("../controllers/reportController");
 const { authenticate, authorize } = require("../middleware/auth");
 
-// 🔐 Toutes les routes protégées
 router.use(authenticate);
 
-router.get("/", authorize("DG"), reportController.getAllReports);
-router.get("/my-reports", reportController.getMyReports);
-router.get("/:id", reportController.getReportDetails);
-router.post("/", reportController.createReport);
-router.put("/:id", reportController.updateReport);
-router.delete("/:id", reportController.deleteReport);
-router.post("/:id/submit", reportController.submitReport);
-router.post("/:id/read", authenticate, reportController.markAsRead);
-router.get("/:id/readers", authenticate, reportController.getReaders);
-router.get("/:id/comments", authenticate, reportController.getComments);
-router.post("/:id/comments", authenticate, reportController.addComment);
-router.post("/:id/annotations", authenticate, reportController.addAnnotation);
-router.get("/:id/export/pdf", authenticate, reportController.generateReport);
-
-// Validation (direction + admin seulement)
-router.post(
-  "/:id/validate",
-  authorize("DG"),
-  reportController.validateReport,
-);
-
-//
+// Routes statiques d'abord
 router.get("/builder", reportController.initializeBuilder);
-router.post("/custom/generate", reportController.saveTemplate);
-router.post("/generate", reportController.generateReport);
-
-/* ==============================
-   📊 STATISTIQUES
-============================== */
-
+router.get("/my-reports", reportController.getMyReports);
 router.get(
   "/stats/:departmentId",
   authorize("DG"),
   reportController.getDepartmentStats,
 );
 
+// Liste
+router.get("/", reportController.getAllReports);
+
+// Création
+router.post("/", reportController.createReport);
+router.post("/custom/generate", reportController.saveTemplate);
+router.post("/generate", reportController.generateReport);
+
+// Détail dynamique à la fin
+router.get("/:id", reportController.getReportDetails);
+router.put("/:id", reportController.updateReport);
+router.delete("/:id", reportController.deleteReport);
+router.post("/:id/submit", reportController.submitReport);
+router.post("/:id/read", reportController.markAsRead);
+router.get("/:id/readers", reportController.getReaders);
+router.get("/:id/comments", reportController.getComments);
+router.post("/:id/comments", reportController.addComment);
+router.post("/:id/annotations", reportController.addAnnotation);
+router.get("/:id/export/pdf", reportController.generateReport);
+router.post("/:id/validate", authorize("DG"), reportController.validateReport);
 
 module.exports = router;

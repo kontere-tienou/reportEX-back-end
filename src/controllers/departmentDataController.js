@@ -66,13 +66,17 @@ const departmentDataController = {
   async getOne(req, res) {
     try {
       const { deptCode, id } = req.params;
-
+  
+      if (!isUuid(id)) {
+        return errorResponse(res, "ID invalide", 400);
+      }
+  
       const data = await departmentDataService.getById(deptCode, id);
-
+  
       if (!data) {
         return notFoundResponse(res, "Donnée non trouvée");
       }
-
+  
       return successResponse(res, { data }, "Donnée récupérée avec succès");
     } catch (error) {
       console.error("Get data error:", error);

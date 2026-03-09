@@ -8,12 +8,10 @@ const logger = require("../utils/logger");
  * ==========================================
  */
 
-/**
- * Custom Error Class
- */
 class AppError extends Error {
   constructor(message, statusCode, errorCode = null) {
     super(message);
+    this.name = this.constructor.name;
     this.statusCode = statusCode;
     this.errorCode = errorCode;
     this.isOperational = true;
@@ -21,14 +19,73 @@ class AppError extends Error {
   }
 }
 
+class NotFoundError extends AppError {
+  constructor(message = "Ressource introuvable") {
+    super(message, HTTP_STATUS.NOT_FOUND, ERROR_CODE.NOT_FOUND);
+  }
+}
+
+class ConflictError extends AppError {
+  constructor(message = "Conflit détecté") {
+    super(message, HTTP_STATUS.CONFLICT, ERROR_CODE.DUPLICATE);
+  }
+}
+
+class ValidationError extends AppError {
+  constructor(message = "Données invalides") {
+    super(message, HTTP_STATUS.BAD_REQUEST, ERROR_CODE.VALIDATION_ERROR);
+  }
+}
+
+class ForbiddenError extends AppError {
+  constructor(message = "Accès interdit") {
+    super(message, HTTP_STATUS.FORBIDDEN, ERROR_CODE.FORBIDDEN);
+  }
+}
+
+class UnauthorizedError extends AppError {
+  constructor(message = "Non autorisé") {
+    super(message, HTTP_STATUS.UNAUTHORIZED, ERROR_CODE.UNAUTHORIZED);
+  }
+}
+
+/**
+ * Helper validation période
+ */
+const isValidPeriod = (start, end) => {
+  if (!start || !end) {
+    return {
+      valid: false,
+      error: "Les dates de début et de fin sont obligatoires",
+    };
+  }
+
+  const startDate = new Date(start);
+  const endDate = new Date(end);
+
+  if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
+    return {
+      valid: false,
+      error: "Format de date invalide",
+    };
+  }
+
+  if (startDate > endDate) {
+    return {
+      valid: false,
+      error: "La date de début doit être antérieure à la date de fin",
+    };
+  }
+
+  return { valid: true };
+};
+
 /**
  * Not Found Handler
  */
 const notFound = (req, res, next) => {
-  const error = new AppError(
+  const error = new NotFoundError(
     `Route non trouvée: ${req.method} ${req.originalUrl}`,
-    HTTP_STATUS.NOT_FOUND,
-    ERROR_CODE.NOT_FOUND,
   );
   next(error);
 };
@@ -37,118 +94,59 @@ const notFound = (req, res, next) => {
  * Global Error Handler
  */
 const errorHandler = (err, req, res, next) => {
-  let error = { ...err };
-  error.message = err.message;
-  error.stack = err.stack;
+  let error = err;
 
-  // Log error
   logger.error("Error:", {
-    message: error.message,
-    stack: error.stack,
+    message: err.message,
+    stack: err.stack,
     url: req.originalUrl,
     method: req.method,
     ip: req.ip,
     userId: req.userId,
   });
 
-  // Mongoose bad ObjectId
   if (err.name === "CastError") {
-    error = new AppError(
-      "Ressource non trouvée",
-      HTTP_STATUS.NOT_FOUND,
-      ERROR_CODE.NOT_FOUND,
-    );
+    error = new NotFoundError("Ressource non trouvée");
   }
 
-  // Mongoose duplicate key
   if (err.code === 11000) {
-    const field = Object.keys(err.keyValue)[0];
-    error = new AppError(
-      `Le champ ${field} existe déjà`,
-      HTTP_STATUS.CONFLICT,
-      ERROR_CODE.DUPLICATE,
-    );
+    const field = Object.keys(err.keyValue || {})[0];
+    error = new ConflictError(`Le champ ${field} existe déjà`);
   }
 
-  // Mongoose validation error
-  if (err.name === "ValidationError") {
-    const messages = Object.values(err.errors).map((val) => val.message);
-    error = new AppError(
-      messages.join(", "),
-      HTTP_STATUS.BAD_REQUEST,
-      ERROR_CODE.VALIDATION_ERROR,
-    );
-  }
-
-  // JWT errors
   if (err.name === "JsonWebTokenError") {
-    error = new AppError(
-      "Token invalide",
-      HTTP_STATUS.UNAUTHORIZED,
-      ERROR_CODE.UNAUTHORIZED,
-    );
+    error = new UnauthorizedError("Token invalide");
   }
 
   if (err.name === "TokenExpiredError") {
-    error = new AppError(
-      "Token expiré",
-      HTTP_STATUS.UNAUTHORIZED,
-      ERROR_CODE.UNAUTHORIZED,
-    );
+    error = new UnauthorizedError("Token expiré");
   }
 
-  // PostgreSQL errors
   if (err.code === "23505") {
-    // Unique violation
-    error = new AppError(
-      "Cette valeur existe déjà",
-      HTTP_STATUS.CONFLICT,
-      ERROR_CODE.DUPLICATE,
-    );
+    error = new ConflictError("Cette valeur existe déjà");
   }
 
   if (err.code === "23503") {
-    // Foreign key violation
-    error = new AppError(
-      "Référence invalide",
-      HTTP_STATUS.BAD_REQUEST,
-      ERROR_CODE.BAD_REQUEST,
-    );
+    error = new ValidationError("Référence invalide");
   }
 
   if (err.code === "23502") {
-    // Not null violation
-    error = new AppError(
-      "Champs obligatoires manquants",
-      HTTP_STATUS.BAD_REQUEST,
-      ERROR_CODE.VALIDATION_ERROR,
-    );
+    error = new ValidationError("Champs obligatoires manquants");
   }
 
-  // Multer errors (file upload)
   if (err.name === "MulterError") {
-    if (err.code === "LIMIT_FILE_SIZE") {
-      error = new AppError(
-        "Fichier trop volumineux",
-        HTTP_STATUS.BAD_REQUEST,
-        ERROR_CODE.BAD_REQUEST,
-      );
-    } else {
-      error = new AppError(
-        "Erreur lors du téléchargement du fichier",
-        HTTP_STATUS.BAD_REQUEST,
-        ERROR_CODE.BAD_REQUEST,
-      );
-    }
+    error =
+      err.code === "LIMIT_FILE_SIZE"
+        ? new ValidationError("Fichier trop volumineux")
+        : new ValidationError("Erreur lors du téléchargement du fichier");
   }
 
-  // Response
   res.status(error.statusCode || HTTP_STATUS.INTERNAL_ERROR).json({
     success: false,
     message: error.message || "Erreur interne du serveur",
-    errorCode: error.errorCode,
+    errorCode: error.errorCode || ERROR_CODE.INTERNAL_ERROR,
     ...(config.server.env === "development" && {
-      stack: error.stack,
+      stack: err.stack,
       error: err,
     }),
   });
@@ -163,6 +161,12 @@ const asyncHandler = (fn) => (req, res, next) => {
 
 module.exports = {
   AppError,
+  NotFoundError,
+  ConflictError,
+  ValidationError,
+  ForbiddenError,
+  UnauthorizedError,
+  isValidPeriod,
   notFound,
   errorHandler,
   asyncHandler,

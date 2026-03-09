@@ -8,6 +8,8 @@ const {
 } = require("../utils/responseFormatter");
 const { HTTP_STATUS } = require("../config/constants");
 const db = require("../config/database");
+const reportService = require("../service/reportService");
+const reportAccessRequestService = require("../service/reportAccessRequestService");
 
 /**
  * ==========================================
@@ -169,82 +171,105 @@ const reportController = {
 
   async getAllReports(req, res) {
     try {
-      const { page, limit, department_id, status, search } = req.query;
-
-      const result = await Report.findAll({
-        page: parseInt(page) || 1,
-        limit: parseInt(limit) || 20,
-        department_id,
+      const user = req.user;
+      const {
         status,
         search,
+        visibility,
+        department_id,
+        page,
+        limit
+      } = req.query;
+  
+      const isDG = user?.role?.toUpperCase() === "DG";
+  
+      const filters = {
+        status,
+        search,
+        page,
+        limit,
+      };
+  
+      if (isDG) {
+        if (visibility) filters.visibility = visibility;
+        if (department_id) filters.department_id = department_id;
+      } else {
+        filters.visibility = "public";
+      }
+  
+      const reports = await reportService.getAllReports(filters, user);
+  
+      return res.status(200).json({
+        success: true,
+        data: {
+          reports,
+        },
       });
-
-      return successResponse(res, result, "Rapports récupérés");
     } catch (error) {
-      console.error("Get all reports error:", error);
-      return errorResponse(
-        res,
-        "Erreur lors de la récupération des rapports",
-        HTTP_STATUS.INTERNAL_ERROR,
-      );
+      console.error("getAllReports error:", error);
+      return res.status(500).json({
+        success: false,
+        message: error.message || "Erreur lors du chargement des rapports",
+      });
     }
   },
 
   async getReportDetails(req, res) {
     try {
       const { id } = req.params;
-
-      const report = await Report.findById(id);
-
-      if (!report) {
-        return notFoundResponse(res, "Rapport non trouvé");
-      }
-
-      // Get permissions
-      const permissions = await Report.getPermissions(id, req.user);
-
-      if (!permissions.canRead) {
-        return errorResponse(res, "Accès refusé", HTTP_STATUS.FORBIDDEN, {
-          needsAccessRequest: permissions.needsAccessRequest,
+      const user = req.user;
+  
+      // Charger le rapport avec les joins
+      const report = await reportService.getReportDetails(id);
+  
+      // Vérifier l'accès via le service dédié
+      const canRead = await reportAccessRequestService.canReadReport({
+        reportId: id,
+        user,
+      });
+  
+      if (!canRead) {
+        return res.status(403).json({
+          success: false,
+          message: "Accès restreint",
+          data: {
+            needsAccessRequest: true,
+          },
         });
       }
-
-      // Get validations
-      const validations = await Report.getValidations(id);
-
-      // Get annotations
-      const annotations = await Report.getAnnotations(id);
-
-      // Parse data
-      let parsedData = report.data;
-      if (typeof parsedData === "string") {
-        try {
-          parsedData = JSON.parse(parsedData);
-        } catch (e) {
-          parsedData = { contenu_brut: parsedData };
-        }
-      }
-
-      return successResponse(
-        res,
-        {
-          report: {
-            ...report,
-            data: parsedData,
-            validations,
-            annotations,
-          },
+  
+      const role = String(user?.role || "").toUpperCase();
+      const isDG = ["DG", "ADMIN"].includes(role);
+      const isOwner = Number(report.user_id) === Number(user.id);
+  
+      const permissions = {
+        canRead: true,
+        canEdit: isOwner && ["brouillon", "rejete"].includes(report.status),
+        canDelete: isOwner || isDG,
+        canValidate: isDG && report.status === "soumis",
+      };
+  
+      return res.status(200).json({
+        success: true,
+        data: {
+          report,
           permissions,
         },
-        "Rapport récupéré",
-      );
+      });
     } catch (error) {
-      console.error("Get report details error:", error);
-      return errorResponse(
-        res,
-        "Erreur lors de la récupération du rapport",
-        HTTP_STATUS.INTERNAL_ERROR,
-      );
+      console.error("getReportDetails error:", error);
+  
+      const status =
+        error.statusCode ||
+        error.status ||
+        (error.name === "NotFoundError" ? 404 : null) ||
+        (error.name === "ForbiddenError" ? 403 : null) ||
+        500;
+  
+      return res.status(status).json({
+        success: false,
+        message: error.message || "Erreur lors du chargement du rapport",
+      });
     }
   },
 
