@@ -12,10 +12,7 @@ const {
 } = require("../middleware/errorHandler");
 
 const reportService = {
-  /**
-   * Créer un nouveau rapport (brouillon) avec validation + visibilité
-   * Schema final: reports.visibility, reports.status, reports.data jsonb, period_check, etc.
-   */
+ 
   async createReport(userId, departmentId, reportData) {
     const {
       template_id,
@@ -119,9 +116,6 @@ const reportService = {
     }
   },
 
-  /* ===============================
-     CREATE
-  =============================== */
   async createReport(user, payload) {
     const {
       template_id,
@@ -160,26 +154,69 @@ const reportService = {
 
     return result.rows[0];
   },
+  async getAllReports(filters, user) {
+    try {
+      let query = `
+            SELECT 
+                r.*,
+                d.name as department_name,
+                u.full_name as author_name,
+                u.email as author_email
+            FROM reports r
+            LEFT JOIN departments d ON r.department_id = d.id
+            LEFT JOIN users u ON r.user_id = u.id
+            WHERE 1=1
+        `;
 
-  /* ===============================
-     READ LIST
-  =============================== */
-  async getAllReports(user, filters = {}) {
-    if (user.role === "direction" || user.role === "admin") {
-      return db.query(`SELECT * FROM reports ORDER BY created_at DESC`);
+      const params = [];
+      let paramIndex = 1;
+
+      // Apply filters
+      if (filters.status) {
+        query += ` AND r.status = $${paramIndex++}`;
+        params.push(filters.status);
+      }
+
+      if (filters.visibility) {
+        query += ` AND r.visibility = $${paramIndex++}`;
+        params.push(filters.visibility);
+      }
+
+      if (filters.department_id) {
+        query += ` AND r.department_id = $${paramIndex++}`;
+        params.push(filters.department_id);
+      }
+
+      if (filters.search) {
+        query += ` AND (
+                r.id::text LIKE $${paramIndex} 
+                OR u.full_name ILIKE $${paramIndex}
+                OR d.name ILIKE $${paramIndex}
+            )`;
+        params.push(`%${filters.search}%`);
+        paramIndex++;
+      }
+
+      // Add ordering
+      query += ` ORDER BY r.created_at DESC`;
+
+      // Add pagination
+      const page = parseInt(filters.page) || 1;
+      const limit = parseInt(filters.limit) || 20;
+      const offset = (page - 1) * limit;
+
+      query += ` LIMIT $${paramIndex++} OFFSET $${paramIndex++}`;
+      params.push(limit, offset);
+
+      const result = await db.query(query, params);
+
+      return result.rows;
+    } catch (error) {
+      console.error("Error in getAllReports:", error);
+      throw error;
     }
-
-    return db.query(
-      `SELECT * FROM reports
-       WHERE department_id=$1
-       ORDER BY created_at DESC`,
-      [user.department_id],
-    );
   },
 
-  /* ===============================
-     READ ONE
-  =============================== */
   async getReportById(user, reportId) {
     const result = await db.query(`SELECT * FROM reports WHERE id=$1`, [
       reportId,
@@ -200,9 +237,6 @@ const reportService = {
     return report;
   },
 
-  /* ===============================
-     UPDATE
-  =============================== */
   async updateReport(user, reportId, payload) {
     const report = await this.getReportById(user, reportId);
 
@@ -233,9 +267,6 @@ const reportService = {
     return result.rows[0];
   },
 
-  /* ===============================
-     DELETE
-  =============================== */
   async deleteReport(user, reportId) {
     const report = await this.getReportById(user, reportId);
 
@@ -249,12 +280,6 @@ const reportService = {
     return { message: "Rapport supprimé" };
   },
 
-  /**
-   * Soumettre un rapport pour validation (department user)
-   * - status: brouillon | rejete | en_revision -> soumis
-   * - set submitted_at
-   * - notify direction/admin + email
-   */
   async submitReport(reportId, userId) {
     // On lock la ligne pour éviter double submit
     const reportResult = await db.query(
@@ -361,7 +386,6 @@ const reportService = {
     }
   },
 
-  
   async validateReport(reportId, validatorUser) {
     if (!["direction", "admin", "validateur"].includes(validatorUser.role)) {
       throw new ForbiddenError("Accès refusé");
@@ -431,7 +455,6 @@ const reportService = {
       throw err;
     }
   },
-
 
   async rejectReport(reportId, validatorUser, reason) {
     if (!reason || String(reason).trim().length < 3) {
@@ -510,9 +533,6 @@ const reportService = {
     }
   },
 
-  /**
-   * Valider les données par rapport au template
-   */
   validateReportData(data, templateFields) {
     const fields =
       typeof templateFields === "string"
@@ -549,171 +569,167 @@ const reportService = {
     return true;
   },
 
-  /**
-   * Détails rapport (joins)
-   */
-  async getReportDetails(reportId) {
-    const result = await db.query(
-      `SELECT r.*,
-              u.full_name as author_name,
-              u.email as author_email,
-              v.full_name as validator_name,
-              d.name as department_name
-       FROM reports r
-       JOIN users u ON r.user_id = u.id
-       LEFT JOIN users v ON r.validated_by = v.id
-       JOIN departments d ON r.department_id = d.id
-       WHERE r.id = $1`,
-      [reportId],
-    );
-  
-    if (result.rows.length === 0) {
-      throw new NotFoundError("Rapport non trouvé");
+  async getReportDetails(id) {
+    try {
+      const query = `
+            SELECT 
+                r.*,
+                d.name as department_name,
+                u.full_name as author_name,
+                u.email as author_email,
+                json_agg(
+                    DISTINCT jsonb_build_object(
+                        'id', c.id,
+                        'content', c.comment,
+                        'created_at', c.created_at,
+                        'user_id', c.user_id,
+                        'user_name', cu.full_name
+                    )
+                ) FILTER (WHERE c.id IS NOT NULL) as comments,
+                json_agg(
+                    DISTINCT jsonb_build_object(
+                        'id', rr.user_id,
+                        'user_name', ru.full_name,
+                        'read_at', rr.read_at
+                    )
+                ) FILTER (WHERE rr.user_id IS NOT NULL) as readers
+            FROM reports r
+            LEFT JOIN departments d ON r.department_id = d.id
+            LEFT JOIN users u ON r.user_id = u.id
+            LEFT JOIN comments c ON r.id = c.report_id
+            LEFT JOIN users cu ON c.user_id = cu.id
+            LEFT JOIN report_readers rr ON r.id = rr.report_id
+            LEFT JOIN users ru ON rr.user_id = ru.id
+            WHERE r.id = $1
+            GROUP BY r.id, d.name, u.full_name, u.email
+        `;
+
+      const result = await db.query(query, [id]);
+
+      if (result.rows.length === 0) {
+        const error = new Error("Report not found");
+        error.name = "NotFoundError";
+        throw error;
+      }
+
+      return result.rows[0];
+    } catch (error) {
+      console.error("Error in getReportDetails:", error);
+      throw error;
     }
-  
-    return result.rows[0];
   },
-  
-    /* ===============================
-    DEMANDE D'ACCÈS
- =============================== */
- async requestAccess(user, reportId) {
 
-   const report = await db.query(
-     `SELECT * FROM reports WHERE id=$1`,
-     [reportId]
-   );
+  async requestAccess(user, reportId) {
+    const report = await db.query(`SELECT * FROM reports WHERE id=$1`, [
+      reportId,
+    ]);
 
-   if (!report.rows.length)
-     throw new NotFoundError('Rapport introuvable');
+    if (!report.rows.length) throw new NotFoundError("Rapport introuvable");
 
-   const targetReport = report.rows[0];
+    const targetReport = report.rows[0];
 
-   if (targetReport.department_id === user.department_id)
-     throw new ConflictError('Votre département possède déjà ce rapport');
+    if (targetReport.department_id === user.department_id)
+      throw new ConflictError("Votre département possède déjà ce rapport");
 
-   if (targetReport.visibility !== 'public')
-     throw new ForbiddenError('Ce rapport est privé');
+    if (targetReport.visibility !== "public")
+      throw new ForbiddenError("Ce rapport est privé");
 
-   const existing = await db.query(
-     `SELECT id FROM report_access_requests
+    const existing = await db.query(
+      `SELECT id FROM report_access_requests
       WHERE report_id=$1
       AND requesting_department_id=$2
       AND status='pending'`,
-     [reportId, user.department_id]
-   );
+      [reportId, user.department_id],
+    );
 
-   if (existing.rows.length)
-     throw new ConflictError('Demande déjà en attente');
+    if (existing.rows.length)
+      throw new ConflictError("Demande déjà en attente");
 
-   const result = await db.query(
-     `INSERT INTO report_access_requests
+    const result = await db.query(
+      `INSERT INTO report_access_requests
       (report_id, requesting_department_id)
       VALUES($1,$2)
       RETURNING *`,
-     [reportId, user.department_id]
-   );
+      [reportId, user.department_id],
+    );
 
-   return result.rows[0];
- },
+    return result.rows[0];
+  },
 
- /* ===============================
-    APPROUVER DEMANDE
- =============================== */
- async approveRequest(user, requestId) {
+  async approveRequest(user, requestId) {
+    if (!["direction", "admin"].includes(user.role))
+      throw new ForbiddenError("Accès refusé");
 
-   if (!['direction','admin'].includes(user.role))
-     throw new ForbiddenError('Accès refusé');
+    const request = await db.query(
+      `SELECT * FROM report_access_requests WHERE id=$1`,
+      [requestId],
+    );
 
-   const request = await db.query(
-     `SELECT * FROM report_access_requests WHERE id=$1`,
-     [requestId]
-   );
+    if (!request.rows.length) throw new NotFoundError("Demande introuvable");
 
-   if (!request.rows.length)
-     throw new NotFoundError('Demande introuvable');
-
-   const result = await db.query(
-     `UPDATE report_access_requests
+    const result = await db.query(
+      `UPDATE report_access_requests
       SET status='approved',
           reviewed_by=$1,
           reviewed_at=CURRENT_TIMESTAMP
       WHERE id=$2
       RETURNING *`,
-     [user.id, requestId]
-   );
+      [user.id, requestId],
+    );
 
-   return result.rows[0];
- },
+    return result.rows[0];
+  },
 
- /* ===============================
-    REJETER DEMANDE
- =============================== */
- async rejectRequest(user, requestId) {
+  async rejectRequest(user, requestId) {
+    if (!["direction", "admin"].includes(user.role))
+      throw new ForbiddenError("Accès refusé");
 
-   if (!['direction','admin'].includes(user.role))
-     throw new ForbiddenError('Accès refusé');
+    const request = await db.query(
+      `SELECT * FROM report_access_requests WHERE id=$1`,
+      [requestId],
+    );
 
-   const request = await db.query(
-     `SELECT * FROM report_access_requests WHERE id=$1`,
-     [requestId]
-   );
+    if (!request.rows.length) throw new NotFoundError("Demande introuvable");
 
-   if (!request.rows.length)
-     throw new NotFoundError('Demande introuvable');
-
-   const result = await db.query(
-     `UPDATE report_access_requests
+    const result = await db.query(
+      `UPDATE report_access_requests
       SET status='rejected',
           reviewed_by=$1,
           reviewed_at=CURRENT_TIMESTAMP
       WHERE id=$2
       RETURNING *`,
-     [user.id, requestId]
-   );
+      [user.id, requestId],
+    );
 
-   return result.rows[0];
- },
+    return result.rows[0];
+  },
 
- /* ===============================
-    CHECK ACCESS
- =============================== */
- async canAccessReport(user, reportId) {
+  async canAccessReport(user, reportId) {
+    if (user.role === "direction" || user.role === "admin") return true;
 
-   if (user.role === 'direction' || user.role === 'admin')
-     return true;
+    const report = await db.query(`SELECT * FROM reports WHERE id=$1`, [
+      reportId,
+    ]);
 
-   const report = await db.query(
-     `SELECT * FROM reports WHERE id=$1`,
-     [reportId]
-   );
+    if (!report.rows.length) return false;
 
-   if (!report.rows.length)
-     return false;
+    const r = report.rows[0];
 
-   const r = report.rows[0];
+    if (r.department_id === user.department_id) return true;
 
-   if (r.department_id === user.department_id)
-     return true;
+    if (r.visibility !== "public") return false;
 
-   if (r.visibility !== 'public')
-     return false;
-
-   const access = await db.query(
-     `SELECT id FROM report_access_requests
+    const access = await db.query(
+      `SELECT id FROM report_access_requests
       WHERE report_id=$1
       AND requesting_department_id=$2
       AND status='approved'`,
-     [reportId, user.department_id]
-   );
+      [reportId, user.department_id],
+    );
 
-   return access.rows.length > 0;
- },
+    return access.rows.length > 0;
+  },
 
-
-  /**
-   * Stats département
-   */
   async calculateDepartmentStats(
     departmentId,
     startDate = null,

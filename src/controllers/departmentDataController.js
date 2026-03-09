@@ -1,5 +1,5 @@
 // controllers/departmentDataController.js
-const departmentDataService = require("../service/departmentDataService"); // Check the path!
+const departmentDataService = require("../service/departmentDataService"); 
 const {
   successResponse,
   errorResponse,
@@ -8,6 +8,7 @@ const {
   notFoundResponse,
 } = require("../utils/responseFormatter");
 const { HTTP_STATUS } = require("../config/constants");
+const db = require("../config/database");
 
 /**
  * ==========================================
@@ -16,10 +17,8 @@ const { HTTP_STATUS } = require("../config/constants");
  */
 
 const departmentDataController = {
-  /**
-   * Get all data for a department
-   * GET /api/:deptCode/data
-   */
+ 
+  
   async getAll(req, res) {
     try {
       const { deptCode } = req.params;
@@ -58,25 +57,20 @@ const departmentDataController = {
       );
     }
   },
-
-  /**
-   * Get single data entry
-   * GET /api/:deptCode/data/:id
-   */
   async getOne(req, res) {
     try {
       const { deptCode, id } = req.params;
-  
+
       if (!isUuid(id)) {
         return errorResponse(res, "ID invalide", 400);
       }
-  
+
       const data = await departmentDataService.getById(deptCode, id);
-  
+
       if (!data) {
         return notFoundResponse(res, "Donnée non trouvée");
       }
-  
+
       return successResponse(res, { data }, "Donnée récupérée avec succès");
     } catch (error) {
       console.error("Get data error:", error);
@@ -88,10 +82,6 @@ const departmentDataController = {
     }
   },
 
-  /**
-   * Create new data entry
-   * POST /api/:deptCode/data
-   */
   async create(req, res) {
     try {
       const { deptCode } = req.params;
@@ -132,11 +122,6 @@ const departmentDataController = {
       );
     }
   },
-
-  /**
-   * Update data entry
-   * PUT /api/:deptCode/data/:id
-   */
   async update(req, res) {
     try {
       const { deptCode, id } = req.params;
@@ -171,10 +156,6 @@ const departmentDataController = {
     }
   },
 
-  /**
-   * Delete data entry
-   * DELETE /api/:deptCode/data/:id
-   */
   async delete(req, res) {
     try {
       const { deptCode, id } = req.params;
@@ -199,10 +180,6 @@ const departmentDataController = {
     }
   },
 
-  /**
-   * Get statistics
-   * GET /api/:deptCode/data/stats
-   */
   async getStats(req, res) {
     try {
       const { deptCode } = req.params;
@@ -224,10 +201,6 @@ const departmentDataController = {
     }
   },
 
-  /**
-   * Get aggregated data
-   * GET /api/:deptCode/data/aggregated
-   */
   async getAggregated(req, res) {
     try {
       const { deptCode } = req.params;
@@ -240,11 +213,7 @@ const departmentDataController = {
         metrics: metrics ? JSON.parse(metrics) : [],
       });
 
-      return successResponse(
-        res,
-        aggregated,
-        "Données agrégées récupérées",
-      );
+      return successResponse(res, aggregated, "Données agrégées récupérées");
     } catch (error) {
       console.error("Get aggregated error:", error);
       return errorResponse(
@@ -255,10 +224,6 @@ const departmentDataController = {
     }
   },
 
-  /**
-   * Export data
-   * GET /api/:deptCode/data/export
-   */
   async exportData(req, res) {
     try {
       const { deptCode } = req.params;
@@ -287,6 +252,331 @@ const departmentDataController = {
         res,
         error.message || "Erreur lors de l'export",
         error.status || HTTP_STATUS.INTERNAL_ERROR,
+      );
+    }
+  },
+
+  async getBatchData(req, res) {
+    const { deptCode } = req.params;
+    const { metrics, dateFrom, dateTo, groupBy } = req.body;
+    const userId = req.user.id;
+    const isAdmin = ["DG", "ADMIN"].includes(req.user.role?.toUpperCase());
+
+    try {
+      // Validate input
+      if (!metrics || !Array.isArray(metrics) || metrics.length === 0) {
+        return errorResponse(
+          res,
+          "Metrics array is required",
+          HTTP_STATUS.BAD_REQUEST,
+        );
+      }
+
+      const tableName = `${deptCode.toLowerCase()}_data`;
+
+      // Check if table exists
+      const tableCheck = await db.query(
+        `SELECT EXISTS (
+                  SELECT FROM information_schema.tables 
+                  WHERE table_name = $1
+              )`,
+        [tableName],
+      );
+
+      if (!tableCheck.rows[0].exists) {
+        return errorResponse(
+          res,
+          `Table ${tableName} does not exist`,
+          HTTP_STATUS.NOT_FOUND,
+        );
+      }
+
+      // Build SELECT clause with all metrics
+      const metricSelects = metrics
+        .map((m) => {
+          // Sanitize field name
+          const field = m.field.replace(/[^a-zA-Z0-9_]/g, "");
+
+          switch (m.calculation) {
+            case "sum":
+              return `COALESCE(SUM(${field}), 0) as "${field}_sum"`;
+            case "avg":
+              return `COALESCE(AVG(${field}), 0) as "${field}_avg"`;
+            case "max":
+              return `COALESCE(MAX(${field}), 0) as "${field}_max"`;
+            case "min":
+              return `COALESCE(MIN(${field}), 0) as "${field}_min"`;
+            case "count":
+              return `COUNT(${field}) as "${field}_count"`;
+            default:
+              return `COALESCE(SUM(${field}), 0) as "${field}_sum"`;
+          }
+        })
+        .join(", ");
+
+      // Build WHERE clause
+      const conditions = [];
+      const params = [];
+      let paramIndex = 1;
+
+      if (dateFrom) {
+        conditions.push(`date >= $${paramIndex++}`);
+        params.push(dateFrom);
+      }
+
+      if (dateTo) {
+        conditions.push(`date <= $${paramIndex++}`);
+        params.push(dateTo);
+      }
+
+      // Add user filter if not admin
+      if (!isAdmin) {
+        conditions.push(`user_id = $${paramIndex++}`);
+        params.push(userId);
+      }
+
+      const whereClause =
+        conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+
+      // Add GROUP BY if needed
+      let groupByClause = "";
+      if (groupBy) {
+        const safeGroupBy = groupBy.replace(/[^a-zA-Z0-9_]/g, "");
+        groupByClause = `GROUP BY ${safeGroupBy}`;
+      }
+
+      // Execute query
+      const query = `
+              SELECT 
+                  ${groupBy ? `${groupBy}, ` : ""}
+                  ${metricSelects}
+              FROM ${tableName}
+              ${whereClause}
+              ${groupByClause}
+              ${!groupBy ? "LIMIT 1" : ""}
+          `;
+
+      console.log("Batch query:", query);
+      console.log("Params:", params);
+
+      const result = await db.query(query, params);
+
+      // Format response based on whether grouped or not
+      if (groupBy) {
+        const groupedResults = {};
+        result.rows.forEach((row) => {
+          const key = row[groupBy];
+          groupedResults[key] = row;
+        });
+        return successResponse(res, groupedResults, "Batch data retrieved");
+      } else {
+        return successResponse(
+          res,
+          result.rows[0] || {},
+          "Batch data retrieved",
+        );
+      }
+    } catch (error) {
+      console.error("Get batch data error:", error);
+      return errorResponse(
+        res,
+        "Error retrieving batch data: " + error.message,
+        HTTP_STATUS.INTERNAL_ERROR,
+      );
+    }
+  },
+
+  async getBatchChartData(req, res) {
+    const { deptCode } = req.params;
+    const { metrics, dateFrom, dateTo, groupBy = "date" } = req.body;
+    const userId = req.user.id;
+    const isAdmin = ["DG", "ADMIN"].includes(req.user.role?.toUpperCase());
+
+    try {
+      const tableName = `${deptCode.toLowerCase()}_data`;
+
+      // Build SELECT for multiple metrics
+      const metricSelects = metrics
+        .map((m) => {
+          const field = m.field.replace(/[^a-zA-Z0-9_]/g, "");
+          const agg = m.aggregation || "sum";
+
+          switch (agg) {
+            case "sum":
+              return `COALESCE(SUM(${field}), 0) as "${field}_sum"`;
+            case "avg":
+              return `COALESCE(AVG(${field}), 0) as "${field}_avg"`;
+            case "max":
+              return `COALESCE(MAX(${field}), 0) as "${field}_max"`;
+            case "min":
+              return `COALESCE(MIN(${field}), 0) as "${field}_min"`;
+            default:
+              return `COALESCE(SUM(${field}), 0) as "${field}_sum"`;
+          }
+        })
+        .join(", ");
+
+      // Build WHERE clause
+      const conditions = [];
+      const params = [];
+      let paramIndex = 1;
+
+      if (dateFrom) {
+        conditions.push(`date >= $${paramIndex++}`);
+        params.push(dateFrom);
+      }
+      if (dateTo) {
+        conditions.push(`date <= $${paramIndex++}`);
+        params.push(dateTo);
+      }
+
+      // Add user filter if not admin
+      if (!isAdmin) {
+        conditions.push(`user_id = $${paramIndex++}`);
+        params.push(userId);
+      }
+
+      const whereClause =
+        conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+
+      const query = `
+              SELECT 
+                  ${groupBy},
+                  ${metricSelects}
+              FROM ${tableName}
+              ${whereClause}
+              GROUP BY ${groupBy}
+              ORDER BY ${groupBy} ASC
+          `;
+
+      console.log("Batch chart query:", query);
+      console.log("Params:", params);
+
+      const result = await db.query(query, params);
+
+      // Transform to chart-friendly format
+      const chartData = result.rows.map((row) => {
+        const dataPoint = { [groupBy]: row[groupBy] };
+
+        metrics.forEach((m) => {
+          const field = m.field;
+          const agg = m.aggregation || "sum";
+          dataPoint[field] = row[`${field}_${agg}`] || 0;
+        });
+
+        return dataPoint;
+      });
+
+      return successResponse(res, chartData, "Batch chart data retrieved");
+    } catch (error) {
+      console.error("Get batch chart data error:", error);
+      return errorResponse(
+        res,
+        "Error retrieving batch chart data: " + error.message,
+        HTTP_STATUS.INTERNAL_ERROR,
+      );
+    }
+  },
+  async getPieData(req, res) {
+    try {
+      const { deptCode } = req.params;
+      const { fields, dateFrom, dateTo } = req.body;
+  
+      const table = `${deptCode.toLowerCase()}_data`;
+  
+      const result = await db.query(
+        `
+        SELECT ${fields[0]} AS name,
+               COUNT(*) AS value
+        FROM ${table}
+        WHERE date BETWEEN $1 AND $2
+        GROUP BY ${fields[0]}
+        ORDER BY value DESC
+        `,
+        [dateFrom, dateTo]
+      );
+  
+      res.json({
+        success: true,
+        data: result.rows
+      });
+  
+    } catch (error) {
+      console.error("Pie chart error:", error);
+      res.status(500).json({
+        success: false,
+        message: "Erreur récupération données pie chart"
+      });
+    }
+  },
+  async getBatchStats(req, res) {
+    const { departments } = req.body;
+    const userId = req.user.id;
+    const isAdmin = ["DG", "ADMIN"].includes(req.user.role?.toUpperCase());
+
+    try {
+      if (!departments || !Array.isArray(departments)) {
+        return errorResponse(
+          res,
+          "Departments array is required",
+          HTTP_STATUS.BAD_REQUEST,
+        );
+      }
+
+      const statsPromises = departments.map(async (deptCode) => {
+        const tableName = `${deptCode.toLowerCase()}_data`;
+
+        // Check if table exists
+        const tableCheck = await db.query(
+          `SELECT EXISTS (
+                      SELECT FROM information_schema.tables 
+                      WHERE table_name = $1
+                  )`,
+          [tableName],
+        );
+
+        if (!tableCheck.rows[0].exists) {
+          return {
+            department: deptCode,
+            exists: false,
+            total_records: 0,
+            avg_ca: 0,
+            total_ca: 0,
+          };
+        }
+
+        // Get basic stats
+        const userCondition = !isAdmin ? "AND user_id = $1" : "";
+        const statsQuery = `
+                  SELECT 
+                      COUNT(*) as total_records,
+                      COALESCE(AVG(ca), 0) as avg_ca,
+                      COALESCE(SUM(ca), 0) as total_ca,
+                      MIN(date) as first_record,
+                      MAX(date) as last_record
+                  FROM ${tableName}
+                  WHERE 1=1 ${userCondition}
+              `;
+
+        const params = !isAdmin ? [userId] : [];
+        const result = await db.query(statsQuery, params);
+
+        return {
+          department: deptCode,
+          exists: true,
+          ...result.rows[0],
+        };
+      });
+
+      const results = await Promise.all(statsPromises);
+
+      return successResponse(res, results, "Batch stats retrieved");
+    } catch (error) {
+      console.error("Get batch stats error:", error);
+      return errorResponse(
+        res,
+        "Error retrieving batch stats: " + error.message,
+        HTTP_STATUS.INTERNAL_ERROR,
       );
     }
   },

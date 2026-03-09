@@ -34,7 +34,7 @@ const generalLimiter = rateLimit({
  */
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 5, // 5 requests per windowMs
+  max: 10, // 5 requests per windowMs
   skipSuccessfulRequests: true,
   message: {
     success: false,
@@ -53,8 +53,8 @@ const authLimiter = rateLimit({
  * API limiter
  */
 const apiLimiter = rateLimit({
-  windowMs: 1 * 60 * 1000, // 1 minute
-  max: 60, // 60 requests per minute
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // 60 requests per 15 minutes
   message: {
     success: false,
     message: "Limite d'API atteinte",
@@ -87,10 +87,21 @@ const createLimiter = (windowMinutes, maxRequests) => {
   });
 };
 
+
+const batchLimiter = rateLimit({
+    windowMs: 60 * 1000, // 1 minute
+    max: 60, // 60 batch requests per minute
+    message: {
+        success: false,
+        message: 'Batch request limit reached.'
+    }
+});
+
 module.exports = {
   generalLimiter,
   authLimiter,
   apiLimiter,
   uploadLimiter,
   createLimiter,
+  batchLimiter,
 };

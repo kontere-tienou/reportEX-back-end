@@ -1,7 +1,6 @@
 /**
  * ==========================================
  * ROUTES INDEX
- * Central routing configuration
  * ==========================================
  */
 
@@ -16,11 +15,8 @@ const reportAccessRoutes = require("./reportAccessRequestRoutes");
 const reportRoutes = require("./reportRoutes");
 const departmentDataRoutes = require("./departmentDataRoutes");
 const schemaRoutes = require("./schemaRoutes");
-//const reportHistoryRoutes = require("./reportHistoryRoutes");
 
-/**
- * Configure all routes
- */
+
 const configureRoutes = (app) => {
   // Health check
   app.get("/health", (req, res) => {

@@ -1,8 +1,9 @@
 const express = require("express");
 const router = express.Router();
 const departmentDataController = require("../controllers/departmentDataController");
-const { apiLimiter, createLimiter } = require("../middleware/rateLimiter");
+//const {  } = require("../middleware/rateLimiter");
 const { authenticate } = require("../middleware/auth");
+const {apiLimiter, createLimiter, batchLimiter } = require("../middleware/rateLimiter");
 
 // Create specific limiters for data endpoints
 const dataLimiter = createLimiter(1, 30);
@@ -21,6 +22,17 @@ router.get(
   "/:deptCode/data/aggregated",
   departmentDataController.getAggregated,
 );
+
+router.post("/:deptCode/data/batch", batchLimiter, departmentDataController.getBatchData);
+router.post("/:deptCode/data/batch-chart", batchLimiter, departmentDataController.getBatchChartData);
+router.post(
+  "/:deptCode/data/pie",
+  batchLimiter,
+  departmentDataController.getPieData,
+);
+
+// Optional: Multi-department batch endpoint
+router.post("/data/batch-stats", batchLimiter, departmentDataController.getBatchStats);
 router.get(
   "/:deptCode/data/export",
   createLimiter(5, 5),

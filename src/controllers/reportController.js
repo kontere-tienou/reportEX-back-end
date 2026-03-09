@@ -766,5 +766,4 @@ async function generatePdfReport(report) {
 }
 
 
-
 module.exports = reportController;

@@ -2,6 +2,7 @@ const express = require("express");
 const router = express.Router();
 const { departmentController } = require("../controllers");
 const { authenticate, authorize } = require("../middleware/auth");
+const departmentDataController = require("../controllers/departmentDataController");
 
 /**
  * ==========================================
@@ -32,5 +33,10 @@ router.delete(
   authorize("ADMIN"),
   departmentController.deleteDepartment,
 );
+
+router.post("/data/batch", departmentDataController.getBatchData);
+
+// NEW: Batch endpoint for charts with multiple metrics
+router.post("/data/batch-chart", departmentDataController.getBatchChartData);
 
 module.exports = router;
