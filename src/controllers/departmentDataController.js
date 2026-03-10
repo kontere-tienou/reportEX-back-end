@@ -183,7 +183,7 @@ const departmentDataController = {
   async getStats(req, res) {
     try {
       const { deptCode } = req.params;
-      const userId = req.user?.role === "DG" ? null : req.userId;
+      const userId = req.user?.role? null : req.userId;
 
       console.log("Getting stats for department:", deptCode);
       console.log("User ID:", userId);
@@ -255,7 +255,6 @@ const departmentDataController = {
       );
     }
   },
-
   async getBatchData(req, res) {
     const { deptCode } = req.params;
     const { metrics, dateFrom, dateTo, groupBy } = req.body;
@@ -391,6 +390,118 @@ const departmentDataController = {
     const { metrics, dateFrom, dateTo, groupBy = "date" } = req.body;
     const userId = req.user.id;
     const isAdmin = ["DG", "ADMIN"].includes(req.user.role?.toUpperCase());
+  
+    try {
+      const tableName = `${deptCode.toLowerCase()}_data`;
+  
+      // 1) Get real columns from DB
+      const columnsResult = await db.query(
+        `SELECT column_name
+         FROM information_schema.columns
+         WHERE table_name = $1`,
+        [tableName]
+      );
+  
+      const existingColumns = columnsResult.rows.map((row) => row.column_name);
+  
+      // 2) Keep only valid metrics
+      const validMetrics = (metrics || []).filter((m) =>
+        existingColumns.includes(m.field)
+      );
+  
+      if (validMetrics.length === 0) {
+        return successResponse(res, [], "Aucune métrique valide trouvée");
+      }
+  
+      // 3) Sanitize groupBy too
+      const safeGroupBy = existingColumns.includes(groupBy) ? groupBy : "date";
+  
+      // 4) Build SELECT
+      const metricSelects = validMetrics
+        .map((m) => {
+          const field = m.field;
+          const agg = m.aggregation || "sum";
+  
+          switch (agg) {
+            case "sum":
+              return `COALESCE(SUM(${field}), 0) as "${field}_sum"`;
+            case "avg":
+              return `COALESCE(AVG(${field}), 0) as "${field}_avg"`;
+            case "max":
+              return `COALESCE(MAX(${field}), 0) as "${field}_max"`;
+            case "min":
+              return `COALESCE(MIN(${field}), 0) as "${field}_min"`;
+            default:
+              return `COALESCE(SUM(${field}), 0) as "${field}_sum"`;
+          }
+        })
+        .join(", ");
+  
+      const conditions = [];
+      const params = [];
+      let paramIndex = 1;
+  
+      if (dateFrom) {
+        conditions.push(`date >= $${paramIndex++}`);
+        params.push(dateFrom);
+      }
+  
+      if (dateTo) {
+        conditions.push(`date <= $${paramIndex++}`);
+        params.push(dateTo);
+      }
+  
+      if (!isAdmin) {
+        conditions.push(`user_id = $${paramIndex++}`);
+        params.push(userId);
+      }
+  
+      const whereClause =
+        conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+  
+      const query = `
+        SELECT
+          ${safeGroupBy},
+          ${metricSelects}
+        FROM ${tableName}
+        ${whereClause}
+        GROUP BY ${safeGroupBy}
+        ORDER BY ${safeGroupBy} ASC
+      `;
+  
+      console.log("Batch chart query:", query);
+      console.log("Params:", params);
+  
+      const result = await db.query(query, params);
+  
+      const chartData = result.rows.map((row) => {
+        const dataPoint = { [safeGroupBy]: row[safeGroupBy] };
+  
+        validMetrics.forEach((m) => {
+          const field = m.field;
+          const agg = m.aggregation || "sum";
+          dataPoint[field] = row[`${field}_${agg}`] || 0;
+        });
+  
+        return dataPoint;
+      });
+  
+      return successResponse(res, chartData, "Batch chart data retrieved");
+    } catch (error) {
+      console.error("Get batch chart data error:", error);
+      return errorResponse(
+        res,
+        "Error retrieving batch chart data: " + error.message,
+        HTTP_STATUS.INTERNAL_ERROR
+      );
+    }
+  },
+ /*
+  async getBatchChartData(req, res) {
+    const { deptCode } = req.params;
+    const { metrics, dateFrom, dateTo, groupBy = "date" } = req.body;
+    const userId = req.user.id;
+    const isAdmin = ["DG", "ADMIN"].includes(req.user.role?.toUpperCase());
 
     try {
       const tableName = `${deptCode.toLowerCase()}_data`;
@@ -476,7 +587,8 @@ const departmentDataController = {
         HTTP_STATUS.INTERNAL_ERROR,
       );
     }
-  },
+  },*/
+
   async getPieData(req, res) {
     try {
       const { deptCode } = req.params;
@@ -512,7 +624,7 @@ const departmentDataController = {
   async getBatchStats(req, res) {
     const { departments } = req.body;
     const userId = req.user.id;
-    const isAdmin = ["DG", "ADMIN"].includes(req.user.role?.toUpperCase());
+   // const isAdmin = ["DG", "ADMIN"].includes(req.user.role?.toUpperCase());
 
     try {
       if (!departments || !Array.isArray(departments)) {

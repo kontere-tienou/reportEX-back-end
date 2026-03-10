@@ -530,11 +530,11 @@ class Report {
   static async getDepartmentStats(departmentId) {
     const result = await db.query(
       `SELECT 
-        COUNT(*) AS total,
-        COUNT(CASE WHEN status = 'brouillon' THEN 1 END) AS drafts,
-        COUNT(CASE WHEN status = 'soumis' THEN 1 END) AS pending,
-        COUNT(CASE WHEN status = 'valide' THEN 1 END) AS validated,
-        COUNT(CASE WHEN status = 'rejete' THEN 1 END) AS rejected
+        COUNT(*)::int AS total,
+        COUNT(CASE WHEN status = 'brouillon' THEN 1 END)::int AS drafts,
+        COUNT(CASE WHEN status = 'soumis' THEN 1 END)::int AS pending,
+        COUNT(CASE WHEN status = 'valide' THEN 1 END)::int AS validated,
+        COUNT(CASE WHEN status = 'rejete' THEN 1 END)::int AS rejected
        FROM reports
        WHERE department_id = $1`,
       [departmentId],

@@ -639,29 +639,19 @@ const reportController = {
   async getDepartmentStats(req, res) {
     try {
       const { departmentId } = req.params;
-      const { user } = req;
-      /*if (user.department_id !== parseInt(departmentId)) {
-        return res
-          .status(403)
-          .json({ message: "Access denied: Not in the right department" });
-      }*/
       const stats = await Report.getDepartmentStats(departmentId);
-      if (!stats) {
-        return res.status(404).json({ message: "Department stats not found" });
-      }
-
-      // Return stats if found
+  
       return successResponse(
         res,
         { stats },
-        "Department stats retrieved successfully",
+        "Department stats retrieved successfully"
       );
     } catch (error) {
       console.error("Error fetching department stats:", error);
       return errorResponse(
         res,
         "Error retrieving department stats",
-        HTTP_STATUS.INTERNAL_ERROR,
+        HTTP_STATUS.INTERNAL_ERROR
       );
     }
   },

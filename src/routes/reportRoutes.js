@@ -10,7 +10,6 @@ router.get("/builder", reportController.initializeBuilder);
 router.get("/my-reports", reportController.getMyReports);
 router.get(
   "/stats/:departmentId",
-  authorize("DG"),
   reportController.getDepartmentStats,
 );
 

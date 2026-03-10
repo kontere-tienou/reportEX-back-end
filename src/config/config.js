@@ -1,11 +1,5 @@
 require("dotenv").config();
 
-/**
- * ==========================================
- * APPLICATION CONFIGURATION
- * ==========================================
- */
-
 module.exports = {
   // Server
   server: {

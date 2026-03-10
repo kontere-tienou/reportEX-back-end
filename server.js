@@ -82,31 +82,13 @@ app.get("/api/reports/builder", async (req, res) => {
   }
 });
 
-/**
- * ==========================================
- * CONFIGURATION DES ROUTES
- * ==========================================
- */
-
 configureRoutes(app);
-
-/**
- * ==========================================
- * GESTION DES ERREURS
- * ==========================================
- */
 
 // 404 Non Trouvé
 app.use(notFound);
 
 // Gestionnaire d'erreurs global
 app.use(errorHandler);
-
-/**
- * ==========================================
- * CONFIGURATION SOCKET.IO
- * ==========================================
- */
 
 const connectedUsers = new Map();
 

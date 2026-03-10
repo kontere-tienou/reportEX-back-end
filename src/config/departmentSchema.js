@@ -1,7 +1,6 @@
 /**
  * ==========================================
  * BACKEND DEPARTMENT DATA SCHEMAS
- * (Copied from frontend for validation)
  * ==========================================
  */
 
