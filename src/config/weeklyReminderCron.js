@@ -1,8 +1,8 @@
 const cron = require("node-cron");
-const db = require("../src/config/database");
+const db = require("./database");
 const emailService = require("../src/services/emailService");
 const notificationService = require("../src/services/notificationService");
-const logger = require("../src/config/logger");
+const logger = require("./logger");
 
 /**
  * Cron job pour envoyer des rappels hebdomadaires

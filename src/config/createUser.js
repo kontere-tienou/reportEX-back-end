@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
 const bcrypt = require("bcryptjs");
-const db = require("../src/config/database");
-const logger = require("../src/config/logger");
+const db = require("./database");
+const logger = require("./logger");
 
 /**
  * Script CLI pour créer des utilisateurs
