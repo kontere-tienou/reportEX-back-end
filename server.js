@@ -24,7 +24,7 @@ const colors = {
   cyan: "\x1b[36m",
   magenta: "\x1b[35m",
   blue: "\x1b[34m",
-  pink : "\x1b[35m",
+  pink: "\x1b[35m",
 };
 
 /*
@@ -178,7 +178,9 @@ const startServer = async () => {
       console.log(`${colors.cyan}|  📍 Environnement : ${config.server.env}`);
       console.log(`${colors.magenta}|  🔌 Port : ${PORT}`);
       console.log(`${colors.yellow}|  🌐 API : http://localhost:${PORT}`);
-      console.log(`${colors.green}|  💓 Health : http://localhost:${PORT}/health`);
+      console.log(
+        `${colors.green}|  💓 Health : http://localhost:${PORT}/health`,
+      );
       console.log(`${colors.blue}|  📡 Socket.IO : Activé`);
       console.log(
         `${colors.pink}|═══════════════════════════════════════════${colors.reset}\n`,
