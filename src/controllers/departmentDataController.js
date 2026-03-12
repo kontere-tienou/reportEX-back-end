@@ -22,10 +22,6 @@ const departmentDataController = {
       const { deptCode } = req.params;
       const { page, limit, dateFrom, dateTo, sortBy, sortOrder } = req.query;
       const userId = req.user?.role === "DG" ? null : req.userId;
-
-      console.log("Getting data for department:", deptCode);
-      console.log("User ID:", typeof userId);
-
       const result = await departmentDataService.getAll(
         deptCode,
         {
@@ -37,14 +33,6 @@ const departmentDataController = {
           sortOrder,
         },
         userId,
-        console.log(
-          "Result from service:",
-          result
-            ? { dataLength: result.data.length, pagination: result.pagination }
-            : "No result returned from service",
-          typeof result,
-          userId,
-        ),
       );
 
       return paginatedResponse(
@@ -93,11 +81,6 @@ const departmentDataController = {
       const { deptCode } = req.params;
       const data = req.body;
       const userId = req.userId;
-
-      console.log("Creating data for department:", deptCode);
-      console.log("User ID:", typeof userId);
-      console.log("Data:", data);
-
       // Validate required fields
       if (!data.date) {
         return errorResponse(
@@ -163,10 +146,6 @@ const departmentDataController = {
     try {
       const { deptCode, id } = req.params;
       const userId = req.userId;
-
-      console.log("Deleting data:", id, "for department:", deptCode);
-      console.log("User ID:", typeof userId);
-
       const deleted = await departmentDataService.delete(deptCode, id, userId);
 
       if (!deleted) {
@@ -188,12 +167,7 @@ const departmentDataController = {
     try {
       const { deptCode } = req.params;
       const userId = req.user?.role ? null : req.userId;
-
-      console.log("Getting stats for department:", deptCode);
-      console.log("User ID:", typeof userId);
-
       const stats = await departmentDataService.getStats(deptCode, userId);
-
       return successResponse(res, stats, "Statistiques récupérées avec succès");
     } catch (error) {
       console.error("Get stats error:", error);
@@ -263,8 +237,6 @@ const departmentDataController = {
     const { deptCode } = req.params;
     const { metrics, dateFrom, dateTo, groupBy } = req.body;
     const userId = req.user.id;
-    console.log("User ID type:", typeof userId);
-    console.log("User ID value:", userId);
     const isAdmin = ["DG", "ADMIN"].includes(req.user.role?.toUpperCase());
 
     try {
@@ -417,24 +389,12 @@ const departmentDataController = {
       );
     }
   },
-  
+
   async getBatchChartData(req, res) {
     const { deptCode } = req.params;
     const { metrics, dateFrom, dateTo, groupBy = "date" } = req.body;
     const userId = req.user.id;
     const isAdmin = ["DG", "ADMIN"].includes(req.user.role?.toUpperCase());
-
-    // Debug logging
-    console.log("User object:", req.user);
-    console.log("User ID type:", typeof userId);
-    console.log("User ID value:", userId);
-    console.log(
-      "Is UUID?",
-      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
-        String(userId),
-      ),
-    );
-
     try {
       const tableName = `${deptCode.toLowerCase()}_data`;
 
@@ -496,20 +456,14 @@ const departmentDataController = {
       }
 
       if (!isAdmin) {
-        // IMPORTANT: Get the actual UUID from users table
-        // First, let's find out what the id column is called in users table
-        // It might be 'id', 'user_id', or something else
-
-        // Try to get the user's UUID from the database
-        // First, check if users table has an 'id' column that contains UUIDs
-        const userQuery = await db.query(
+     
+       const userQuery = await db.query(
           `SELECT id FROM users WHERE email = $1`,
           [req.user.email],
         );
 
         if (userQuery.rows.length > 0) {
           const actualUuid = userQuery.rows[0].id;
-          console.log(`Found UUID for user ${userId}: ${actualUuid}`);
           conditions.push(`user_id = $${paramIndex++}`);
           params.push(actualUuid);
         } else {
@@ -521,7 +475,6 @@ const departmentDataController = {
 
           if (userByIdQuery.rows.length > 0) {
             const actualUuid = userByIdQuery.rows[0].id;
-            console.log(`Found UUID via fallback: ${actualUuid}`);
             conditions.push(`user_id = $${paramIndex++}`);
             params.push(actualUuid);
           } else {
@@ -576,124 +529,6 @@ const departmentDataController = {
     }
   },
 
-  /*async getBatchChartData(req, res) {
-    const { deptCode } = req.params;
-    const { metrics, dateFrom, dateTo, groupBy = "date" } = req.body;
-    const userId = req.user.id;
-    const isAdmin = ["DG", "ADMIN"].includes(req.user.role?.toUpperCase());
-
-    // Debug logging
-    console.log('User object:', req.user);
-    console.log('User ID type:', typeof userId);
-    console.log('User ID value:', userId);
-    console.log('Is UUID?', /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(userId)));
-  
-    try {
-      const tableName = `${deptCode.toLowerCase()}_data`;
-  
-      // 1) Get real columns from DB
-      const columnsResult = await db.query(
-        `SELECT column_name
-         FROM information_schema.columns
-         WHERE table_name = $1`,
-        [tableName]
-      );
-  
-      const existingColumns = columnsResult.rows.map((row) => row.column_name);
-  
-      // 2) Keep only valid metrics
-      const validMetrics = (metrics || []).filter((m) =>
-        existingColumns.includes(m.field)
-      );
-  
-      if (validMetrics.length === 0) {
-        return successResponse(res, [], "Aucune métrique valide trouvée");
-      }
-  
-      // 3) Sanitize groupBy too
-      const safeGroupBy = existingColumns.includes(groupBy) ? groupBy : "date";
-  
-      // 4) Build SELECT
-      const metricSelects = validMetrics
-        .map((m) => {
-          const field = m.field;
-          const agg = m.aggregation || "sum";
-  
-          switch (agg) {
-            case "sum":
-              return `COALESCE(SUM(${field}), 0) as "${field}_sum"`;
-            case "avg":
-              return `COALESCE(AVG(${field}), 0) as "${field}_avg"`;
-            case "max":
-              return `COALESCE(MAX(${field}), 0) as "${field}_max"`;
-            case "min":
-              return `COALESCE(MIN(${field}), 0) as "${field}_min"`;
-            default:
-              return `COALESCE(SUM(${field}), 0) as "${field}_sum"`;
-          }
-        })
-        .join(", ");
-  
-      const conditions = [];
-      const params = [];
-      let paramIndex = 1;
-  
-      if (dateFrom) {
-        conditions.push(`date >= $${paramIndex++}`);
-        params.push(dateFrom);
-      }
-  
-      if (dateTo) {
-        conditions.push(`date <= $${paramIndex++}`);
-        params.push(dateTo);
-      }
-  
-      if (!isAdmin) {
-        conditions.push(`user_id = $${paramIndex++}`);
-        params.push(userId);
-      }
-  
-      const whereClause =
-        conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
-  
-      const query = `
-        SELECT
-          ${safeGroupBy},
-          ${metricSelects}
-        FROM ${tableName}
-        ${whereClause}
-        GROUP BY ${safeGroupBy}
-        ORDER BY ${safeGroupBy} ASC
-      `;
-  
-      console.log("Batch chart query:", query);
-      console.log("Params:", params);
-  
-      const result = await db.query(query, params);
-  
-      const chartData = result.rows.map((row) => {
-        const dataPoint = { [safeGroupBy]: row[safeGroupBy] };
-  
-        validMetrics.forEach((m) => {
-          const field = m.field;
-          const agg = m.aggregation || "sum";
-          dataPoint[field] = row[`${field}_${agg}`] || 0;
-        });
-  
-        return dataPoint;
-      });
-  
-      return successResponse(res, chartData, "Batch chart data retrieved");
-    } catch (error) {
-      console.error("Get batch chart data error:", error);
-      return errorResponse(
-        res,
-        "Error retrieving batch chart data: " + error.message,
-        HTTP_STATUS.INTERNAL_ERROR
-      );
-    }
-  },*/
-
   async getPieData(req, res) {
     try {
       const { deptCode } = req.params;
@@ -728,8 +563,6 @@ const departmentDataController = {
   async getBatchStats(req, res) {
     const { departments } = req.body;
     const userId = req.user.id;
-    console.log("User ID type:", typeof userId);
-    console.log("User ID value:", userId);
     // const isAdmin = ["DG", "ADMIN"].includes(req.user.role?.toUpperCase());
 
     try {
