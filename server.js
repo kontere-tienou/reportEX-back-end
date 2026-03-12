@@ -20,6 +20,23 @@ const { notFound, errorHandler } = require("./src/middleware/errorHandler");
   BATEX ERP - CONFIGURATION DU SERVEUR
 ==========================================
  */
+const isRailway = !!process.env.RAILWAY_SERVICE_ID;
+logger.info("🚀 Démarrage du serveur avec la configuration suivante :", {
+  isRailway,
+});
+// Override config for Railway if needed
+if (isRailway) {
+  console.log("🚂 Running on Railway - adjusting configuration");
+  
+  // Ensure we use Railway-assigned port
+  process.env.PORT = process.env.PORT || '5008';
+  
+  // Log all Railway-specific env vars
+  console.log("Railway specific:");
+  console.log("- RAILWAY_PUBLIC_DOMAIN:", process.env.RAILWAY_PUBLIC_DOMAIN);
+  console.log("- RAILWAY_PRIVATE_DOMAIN:", process.env.RAILWAY_PRIVATE_DOMAIN);
+  console.log("- RAILWAY_ENVIRONMENT:", process.env.RAILWAY_ENVIRONMENT);
+}
 
 const app = express();
 const server = http.createServer(app);

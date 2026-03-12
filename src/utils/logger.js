@@ -1,93 +1,98 @@
+// src/utils/logger.js
 const winston = require("winston");
-const path = require("path");
-const config = require("../config/config");
+const { format, transports } = winston;
 
-/**
- * ==========================================
- * LOGGING UTILITY
- * ==========================================
- */
+// Determine if we're in production-like environment (Railway, etc.)
+const isProduction =
+  process.env.NODE_ENV === "production" || !!process.env.RAILWAY_ENVIRONMENT;
 
-// Define log levels
-const levels = {
-  error: 0,
-  warn: 1,
-  info: 2,
-  http: 3,
-  debug: 4,
-};
+// Custom format for better readability in Railway logs
+const customFormat = format.combine(
+  format.timestamp({ format: "YYYY-MM-DD HH:mm:ss" }),
+  format.errors({ stack: true }),
+  format.metadata(),
+  format.json(), // Railway loves structured JSON logs
+);
 
-// Define colors for each level
-const colors = {
-  error: "red",
-  warn: "yellow",
-  info: "green",
-  http: "magenta",
-  debug: "blue",
-};
+// Simple console-friendly format for development
+const devFormat = format.combine(
+  format.colorize(),
+  format.timestamp({ format: "YYYY-MM-DD HH:mm:ss" }),
+  format.printf(({ timestamp, level, message, ...metadata }) => {
+    let msg = `${timestamp} [${level.toUpperCase()}]: ${message}`;
 
-winston.addColors(colors);
+    if (Object.keys(metadata).length > 0) {
+      msg += ` ${JSON.stringify(metadata, null, 2)}`;
+    }
 
-// Define format
-const format = winston.format.combine(
-  winston.format.timestamp({ format: "YYYY-MM-DD HH:mm:ss" }),
-  winston.format.errors({ stack: true }),
-  winston.format.splat(),
-  winston.format.json(),
-  winston.format.printf((info) => {
-    const { timestamp, level, message, ...meta } = info;
-    return `${timestamp} [${level.toUpperCase()}]: ${message} ${
-      Object.keys(meta).length ? JSON.stringify(meta, null, 2) : ""
-    }`;
+    return msg;
   }),
 );
 
-// Define transports
-const transports = [
-  // Console transport
-  new winston.transports.Console({
-    format: winston.format.combine(
-      winston.format.colorize({ all: true }),
-      winston.format.printf((info) => {
-        const { timestamp, level, message } = info;
-        return `${timestamp} [${level}]: ${message}`;
-      }),
-    ),
-  }),
-
-  // Error log file
-  new winston.transports.File({
-    filename: path.join("logs", "error.log"),
-    level: "error",
-    maxsize: 5242880, // 5MB
-    maxFiles: 5,
-  }),
-
-  // Combined log file
-  new winston.transports.File({
-    filename: path.join("logs", "combined.log"),
-    maxsize: 5242880, // 5MB
-    maxFiles: 5,
-  }),
-];
-
-// Create logger instance
 const logger = winston.createLogger({
-  level: config.logging.level || "info",
-  levels,
-  format,
-  transports,
-  exitOnError: false,
+  level: isProduction ? "info" : "debug",
+
+  format: isProduction
+    ? customFormat
+    : format.combine(format.colorize(), devFormat),
+
+  transports: [
+    // Always log to console (Railway captures stdout/stderr)
+    new transports.Console({
+      format: isProduction ? customFormat : devFormat,
+    }),
+
+    // Optional: log errors to a file (useful locally or if you mount persistent storage)
+    // new transports.File({
+    //   filename: 'logs/error.log',
+    //   level: 'error',
+    //   format: customFormat
+    // }),
+    // new transports.File({
+    //   filename: 'logs/combined.log',
+    //   format: customFormat
+    // })
+  ],
+
+  // Handle exceptions & rejections
+  exceptionHandlers: [
+    new transports.Console({
+      format: format.combine(
+        format.colorize(),
+        format.printf(
+          ({ timestamp, level, message, stack }) =>
+            `${timestamp} [EXCEPTION] ${level}: ${message}\n${stack || ""}`,
+        ),
+      ),
+    }),
+  ],
+
+  rejectionHandlers: [
+    new transports.Console({
+      format: format.combine(
+        format.colorize(),
+        format.printf(
+          ({ timestamp, level, message, reason, promise }) =>
+            `${timestamp} [REJECTION] ${level}: ${message}\nReason: ${reason}\nPromise: ${promise}`,
+        ),
+      ),
+    }),
+  ],
 });
 
-// Add audit log method
-logger.audit = (data) => {
-  logger.info("AUDIT", data);
+// Optional: Add request-context support later if needed (with cls-rtracer or similar)
+
+// Helper methods for common structured logging
+logger.infoWithMeta = (message, meta = {}) => {
+  logger.info(message, { ...meta });
 };
 
-// Add database log method
-logger.database = (query, duration) => {
-  logger.debug("DATABASE", { query, duration });
+logger.errorWithMeta = (message, error, meta = {}) => {
+  logger.error(message, {
+    error: error?.message || error,
+    stack: error?.stack,
+    ...meta,
+  });
 };
 
 module.exports = logger;
