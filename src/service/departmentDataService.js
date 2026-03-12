@@ -32,15 +32,12 @@ class DepartmentDataService {
     if (this.cache.has(cacheKey)) {
       const cached = this.cache.get(cacheKey);
       if (Date.now() - cached.timestamp < ttl) {
-        console.log(`✅ Cache hit for ${cacheKey}`);
         return cached.data;
       }
-      console.log(`🔄 Cache expired for ${cacheKey}`);
       this.cache.delete(cacheKey);
     }
 
     // Execute function
-    console.log(`🆕 Cache miss for ${cacheKey}, fetching fresh data`);
     const data = await fn();
 
     // Store in cache
@@ -53,7 +50,6 @@ class DepartmentDataService {
   }
 
   clearCache(deptCode) {
-    console.log(`🧹 Clearing cache for department: ${deptCode}`);
     for (const key of this.cache.keys()) {
       if (key.includes(deptCode)) {
         this.cache.delete(key);
@@ -69,11 +65,6 @@ class DepartmentDataService {
       options,
       userId,
       async () => {
-        console.log("Service getAll called with:", {
-          deptCode,
-          options,
-          userId,
-        });
         const { page, limit, dateFrom, dateTo, sortBy, sortOrder } = options;
 
         // Validate date range
@@ -93,7 +84,6 @@ class DepartmentDataService {
           sortBy,
           sortOrder,
         });
-
         return result;
       },
     );
@@ -107,8 +97,6 @@ class DepartmentDataService {
       options,
       null,
       async () => {
-        console.log("Getting aggregated data for:", deptCode, options);
-
         // Validate and limit options
         const { dateFrom, dateTo, groupBy, metrics = [] } = options;
 
@@ -154,8 +142,6 @@ class DepartmentDataService {
 
   async create(deptCode, data, userId) {
     try {
-      console.log("Service create called with:", { deptCode, data, userId });
-
       // Validate data against schema
       const schema = getDepartmentSchema(deptCode);
 

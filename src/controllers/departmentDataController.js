@@ -26,7 +26,7 @@ const departmentDataController = {
       const userId = req.user?.role === "DG" ? null : req.userId;
 
       console.log("Getting data for department:", deptCode);
-      console.log("User ID:", userId);
+      console.log("User ID:", typeof userId);
 
       const result = await departmentDataService.getAll(
         deptCode,
@@ -63,8 +63,9 @@ const departmentDataController = {
 
       if (!isUuid(id)) {
         return errorResponse(res, "ID invalide", 400);
+        
       }
-
+      console.log("Invalid ID format:", typeof isUuid);
       const data = await departmentDataService.getById(deptCode, id);
 
       if (!data) {
@@ -89,7 +90,7 @@ const departmentDataController = {
       const userId = req.userId;
 
       console.log("Creating data for department:", deptCode);
-      console.log("User ID:", userId);
+      console.log("User ID:",typeof userId);
       console.log("Data:", data);
 
       // Validate required fields
@@ -127,9 +128,6 @@ const departmentDataController = {
       const { deptCode, id } = req.params;
       const data = req.body;
       const userId = req.userId;
-
-      console.log("Updating data:", id, "for department:", deptCode);
-
       const updated = await departmentDataService.update(
         deptCode,
         id,
@@ -162,6 +160,7 @@ const departmentDataController = {
       const userId = req.userId;
 
       console.log("Deleting data:", id, "for department:", deptCode);
+      console.log("User ID:", typeof userId);
 
       const deleted = await departmentDataService.delete(deptCode, id, userId);
 
@@ -186,7 +185,7 @@ const departmentDataController = {
       const userId = req.user?.role? null : req.userId;
 
       console.log("Getting stats for department:", deptCode);
-      console.log("User ID:", userId);
+      console.log("User ID:",  typeof userId);
 
       const stats = await departmentDataService.getStats(deptCode, userId);
 
