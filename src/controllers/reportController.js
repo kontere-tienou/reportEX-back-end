@@ -1,5 +1,6 @@
 const Report = require("../models/reportModel");
 const AuditLog = require("../models/AuditLog");
+const PDFDocument = require("pdfkit");
 const {
   successResponse,
   errorResponse,
@@ -17,6 +18,50 @@ const { generateSnapshot } = require("../service/reportSnapshotService");
  * REPORT CONTROLLER - COMPLETE
  * ==========================================
  */
+const normalizeRole = (user) =>
+  String(user?.role || user?.role_code || "").toUpperCase();
+
+function buildReportPermissions(user, report) {
+  const userId = Number(user?.id);
+  const userDepartmentId = Number(user?.department_id || user?.department?.id);
+  const reportDepartmentId = Number(report?.department_id);
+  const role = normalizeRole(user);
+
+  const isDG = ["DG", "ADMIN"].includes(role);
+  const isOwner = Number(report?.user_id) === userId;
+  const isSameDepartment = reportDepartmentId === userDepartmentId;
+
+  const permissions = {
+    canRead: false,
+    canEdit: false,
+    canDelete: false,
+    canSubmit: false,
+    canValidate: false,
+    canRequestAccess: false,
+  };
+
+  if (isDG) {
+    permissions.canRead = true;
+    permissions.canValidate = report.status === "soumis";
+    return permissions;
+  }
+
+  if (isOwner) {
+    permissions.canRead = true;
+    permissions.canEdit = ["brouillon", "rejete"].includes(report.status);
+    permissions.canDelete = ["brouillon", "rejete"].includes(report.status);
+    permissions.canSubmit = report.status === "brouillon";
+    return permissions;
+  }
+
+  if (isSameDepartment) {
+    permissions.canRead = true;
+    return permissions;
+  }
+
+  permissions.canRequestAccess = true;
+  return permissions;
+}
 
 const reportController = {
   async initializeBuilder(req, res) {
@@ -43,7 +88,7 @@ const reportController = {
         layout,
         dateRange,
         visibility,
-        title, // ← ADD THIS
+        title,
       } = req.body;
 
       if (!period_start || !period_end) {
@@ -95,7 +140,7 @@ const reportController = {
       );
 
       const reportData = {
-        title, 
+        title,
         layout,
         renderedLayout: layout,
         sourceData: snapshot,
@@ -134,15 +179,15 @@ const reportController = {
   async getMyReports(req, res) {
     try {
       const { page, limit, status, search } = req.query;
-
+  
       const result = await Report.findAll({
-        page: parseInt(page) || 1,
-        limit: parseInt(limit) || 20,
+        page: parseInt(page, 10) || 1,
+        limit: parseInt(limit, 10) || 20,
         user_id: req.user.id,
         status,
         search,
       });
-
+  
       return successResponse(res, result, "Rapports récupérés");
     } catch (error) {
       console.error("Get my reports error:", error);
@@ -160,21 +205,24 @@ const reportController = {
       const { status, search, visibility, department_id, page, limit } =
         req.query;
 
-      const isDG = user?.role?.toUpperCase() === "DG";
+        const isDG = ["DG", "ADMIN"].includes(
+          String(user?.role || "").toUpperCase(),
+        );
 
-      const filters = {
-        status,
-        search,
-        page,
-        limit,
-      };
+        const filters = {
+          search,
+          page,
+          limit,
+        };
 
-      if (isDG) {
-        if (visibility) filters.visibility = visibility;
-        if (department_id) filters.department_id = department_id;
-      } else {
-        filters.visibility = "public";
-      }
+        if (isDG) {
+          filters.status = status || "soumis";
+          if (visibility) filters.visibility = visibility;
+          if (department_id) filters.department_id = department_id;
+        } else {
+          filters.status = status;
+          filters.visibility = "public";
+        }
 
       const reports = await reportService.getAllReports(filters, user);
 
@@ -192,8 +240,53 @@ const reportController = {
       });
     }
   },
-
   async getReportDetails(req, res) {
+    try {
+      const { id } = req.params;
+      const user = req.user;
+  
+      const report = await reportService.getReportDetails(id);
+  
+      if (!report) {
+        return notFoundResponse(res, "Rapport introuvable");
+      }
+  
+      const permissions = buildReportPermissions(user, report);
+  
+      if (!permissions.canRead) {
+        return res.status(403).json({
+          success: false,
+          message: "Accès restreint",
+          data: {
+            needsAccessRequest: permissions.canRequestAccess,
+            permissions,
+          },
+        });
+      }
+  
+      return res.status(200).json({
+        success: true,
+        data: {
+          report,
+          permissions,
+        },
+      });
+    } catch (error) {
+      console.error("getReportDetails error:", error);
+  
+      const status =
+        error.statusCode ||
+        error.status ||
+        (error.name === "NotFoundError" ? 404 : null) ||
+        500;
+  
+      return res.status(status).json({
+        success: false,
+        message: error.message || "Erreur lors du chargement du rapport",
+      });
+    }
+  },
+  /*async getReportDetails(req, res) {
     try {
       const { id } = req.params;
       const user = req.user;
@@ -250,45 +343,108 @@ const reportController = {
         message: error.message || "Erreur lors du chargement du rapport",
       });
     }
-  },
-
+  },*/
   async updateReport(req, res) {
     try {
       const { id } = req.params;
-      const { data } = req.body;
-
-      const report = await Report.findById(id);
-
-      if (!report) {
-        return notFoundResponse(res, "Rapport non trouvé");
-      }
-
-      if (report.user_id !== req.user.id) {
-        return errorResponse(res, "Accès refusé", HTTP_STATUS.FORBIDDEN);
-      }
-
-      if (!["brouillon", "rejete"].includes(report.status)) {
+      const {
+        period_start,
+        period_end,
+        layout,
+        dateRange,
+        visibility,
+        title,
+      } = req.body;
+  
+      if (!title || !period_start || !period_end) {
         return errorResponse(
           res,
-          "Impossible de modifier ce rapport",
+          "Titre et dates obligatoires",
           HTTP_STATUS.BAD_REQUEST,
         );
       }
-
-      const updated = await Report.update(id, { data });
-
-      // Audit log
+  
+      if (!layout || !Array.isArray(layout)) {
+        return errorResponse(
+          res,
+          "Le layout du rapport est invalide",
+          HTTP_STATUS.BAD_REQUEST,
+        );
+      }
+  
+      if (new Date(period_start) > new Date(period_end)) {
+        return errorResponse(
+          res,
+          "La date de début doit être avant la date de fin",
+          HTTP_STATUS.BAD_REQUEST,
+        );
+      }
+  
+      const existingReport = await reportService.getReportDetails(id);
+  
+      if (!existingReport) {
+        return errorResponse(
+          res,
+          "Rapport introuvable",
+          HTTP_STATUS.NOT_FOUND,
+        );
+      }
+  
+      const permissions = buildReportPermissions(req.user, existingReport);
+  
+      if (!permissions.canEdit) {
+        return errorResponse(
+          res,
+          "Vous n'avez pas la permission de modifier ce rapport",
+          HTTP_STATUS.FORBIDDEN,
+        );
+      }
+  
+      const departmentId =
+        req.user.department_id || req.user.department?.id;
+  
+      const snapshot = await generateSnapshot(
+        layout,
+        departmentId,
+        dateRange,
+      );
+  
+      const reportData = {
+        title,
+        layout,
+        renderedLayout: layout,
+        sourceData: snapshot,
+        dateRange,
+      };
+  
+      const updated = await db.query(
+        `UPDATE reports
+         SET title = $1,
+             period_start = $2,
+             period_end = $3,
+             visibility = $4,
+             layout = $5,
+             updated_at = NOW()
+         WHERE id = $6
+         RETURNING *`,
+        [title, period_start, period_end, visibility || "private", reportData, id],
+      );
+  
       await AuditLog.create({
         user_id: req.user.id,
         action: "UPDATE",
         entity_type: "report",
         entity_id: id,
-        details: { data },
+        details: { period_start, period_end, visibility, title },
         ip_address: req.ip,
         user_agent: req.get("user-agent"),
       });
-
-      return successResponse(res, { report: updated }, "Rapport mis à jour");
+  
+      return successResponse(
+        res,
+        { report: updated.rows[0] },
+        "Rapport mis à jour avec succès",
+      );
     } catch (error) {
       console.error("Update report error:", error);
       return errorResponse(
@@ -298,8 +454,175 @@ const reportController = {
       );
     }
   },
-
+  /*async updateReport(req, res) {
+    try {
+      const { id } = req.params;
+      const {
+        period_start,
+        period_end,
+        layout,
+        dateRange,
+        visibility,
+        title,
+      } = req.body;
+  
+      if (!title || !period_start || !period_end) {
+        return errorResponse(
+          res,
+          "Titre et dates obligatoires",
+          HTTP_STATUS.BAD_REQUEST,
+        );
+      }
+  
+      if (!layout || !Array.isArray(layout)) {
+        return errorResponse(
+          res,
+          "Le layout du rapport est invalide",
+          HTTP_STATUS.BAD_REQUEST,
+        );
+      }
+  
+      if (new Date(period_start) > new Date(period_end)) {
+        return errorResponse(
+          res,
+          "La date de début doit être avant la date de fin",
+          HTTP_STATUS.BAD_REQUEST,
+        );
+      }
+  
+      const departmentId = req.user.department_id || req.user.department?.id;
+  
+      const existingReport = await db.query(
+        `SELECT * FROM reports WHERE id = $1 AND department_id = $2`,
+        [id, departmentId]
+      );
+  
+      if (existingReport.rowCount === 0) {
+        return errorResponse(
+          res,
+          "Rapport introuvable",
+          HTTP_STATUS.NOT_FOUND,
+        );
+      }
+  
+      const snapshot = await generateSnapshot(
+        layout,
+        departmentId,
+        dateRange,
+      );
+  
+      const reportData = {
+        title,
+        layout,
+        renderedLayout: layout,
+        sourceData: snapshot,
+        dateRange,
+      };
+  
+      const updated = await db.query(
+        `UPDATE reports
+         SET title = $1,
+             period_start = $2,
+             period_end = $3,
+             visibility = $4,
+             layout = $5,
+             updated_at = NOW()
+         WHERE id = $6
+         RETURNING *`,
+        [title, period_start, period_end, visibility || 'private', reportData, id]
+      );
+  
+      await AuditLog.create({
+        user_id: req.user.id,
+        action: "UPDATE",
+        entity_type: "report",
+        entity_id: id,
+        details: { period_start, period_end, visibility, title },
+        ip_address: req.ip,
+        user_agent: req.get("user-agent"),
+      });
+  
+      return successResponse(res, { report: updated.rows[0] }, "Rapport mis à jour avec succès");
+    } catch (error) {
+      console.error("Update report error:", error);
+      return errorResponse(
+        res,
+        "Erreur lors de la mise à jour du rapport",
+        HTTP_STATUS.INTERNAL_ERROR,
+      );
+    }
+  },*/
   async submitReport(req, res) {
+    try {
+      const { id } = req.params;
+  
+      const existingReport = await reportService.getReportDetails(id);
+  
+      if (!existingReport) {
+        return notFoundResponse(res, "Rapport introuvable");
+      }
+  
+      const permissions = buildReportPermissions(req.user, existingReport);
+  
+      if (!permissions.canSubmit) {
+        return errorResponse(
+          res,
+          "Vous n'avez pas la permission de soumettre ce rapport",
+          HTTP_STATUS.FORBIDDEN,
+        );
+      }
+  
+      const report = await Report.submit(id, req.user.id);
+  
+      if (!report) {
+        return errorResponse(
+          res,
+          "Rapport non trouvé ou déjà soumis",
+          HTTP_STATUS.BAD_REQUEST,
+        );
+      }
+  
+      await AuditLog.create({
+        user_id: req.user.id,
+        action: "SUBMIT",
+        entity_type: "report",
+        entity_id: id,
+        ip_address: req.ip,
+        user_agent: req.get("user-agent"),
+      });
+  
+      const io = req.app.get("io");
+      if (io) {
+        const dgUsers = await db.query(
+          `SELECT id FROM users WHERE role IN ('DG', 'ADMIN') AND is_active = true`,
+        );
+  
+        for (const dg of dgUsers.rows) {
+          await db.query(
+            `INSERT INTO notifications (user_id, type, title, message, link)
+             VALUES ($1, $2, $3, $4, $5)`,
+            [
+              dg.id,
+              "report_submitted",
+              "Rapport soumis pour validation",
+              `${req.user.full_name} a soumis un rapport`,
+              `/reports/${id}`,
+            ],
+          );
+        }
+      }
+  
+      return successResponse(res, { report }, "Rapport soumis pour validation");
+    } catch (error) {
+      console.error("Submit report error:", error);
+      return errorResponse(
+        res,
+        "Erreur lors de la soumission du rapport",
+        HTTP_STATUS.INTERNAL_ERROR,
+      );
+    }
+  },
+  /*async submitReport(req, res) {
     try {
       const { id } = req.params;
 
@@ -354,9 +677,100 @@ const reportController = {
         HTTP_STATUS.INTERNAL_ERROR,
       );
     }
-  },
-
+  },*/
   async validateReport(req, res) {
+    try {
+      const { id } = req.params;
+      const { status, comments } = req.body;
+  
+      if (!["valide", "rejete"].includes(status)) {
+        return errorResponse(res, "Statut invalide", HTTP_STATUS.BAD_REQUEST);
+      }
+  
+      if (status === "rejete" && !comments) {
+        return errorResponse(
+          res,
+          "Les commentaires sont requis pour un rejet",
+          HTTP_STATUS.BAD_REQUEST,
+        );
+      }
+  
+      const existingReport = await reportService.getReportDetails(id);
+  
+      if (!existingReport) {
+        return notFoundResponse(res, "Rapport introuvable");
+      }
+  
+      const permissions = buildReportPermissions(req.user, existingReport);
+  
+      if (!permissions.canValidate) {
+        return errorResponse(
+          res,
+          "Vous n'avez pas la permission de valider ou rejeter ce rapport",
+          HTTP_STATUS.FORBIDDEN,
+        );
+      }
+  
+      const report = await Report.validate(id, req.user.id, {
+        status,
+        comments,
+      });
+  
+      if (!report) {
+        return errorResponse(
+          res,
+          "Rapport non trouvé ou déjà traité",
+          HTTP_STATUS.BAD_REQUEST,
+        );
+      }
+  
+      await AuditLog.create({
+        user_id: req.user.id,
+        action: "VALIDATE",
+        entity_type: "report",
+        entity_id: id,
+        details: { status, comments },
+        ip_address: req.ip,
+        user_agent: req.get("user-agent"),
+      });
+  
+      const io = req.app.get("io");
+      if (io) {
+        await db.query(
+          `INSERT INTO notifications (user_id, type, title, message, link)
+           VALUES ($1, $2, $3, $4, $5)`,
+          [
+            report.user_id,
+            `report_${status}`,
+            status === "valide" ? "Rapport validé" : "Rapport rejeté",
+            status === "valide"
+              ? "Votre rapport a été validé"
+              : `Votre rapport a été rejeté: ${comments}`,
+            `/reports/${id}`,
+          ],
+        );
+  
+        io.to(`user:${report.user_id}`).emit("notification", {
+          type: `report_${status}`,
+          message: status === "valide" ? "Rapport validé" : "Rapport rejeté",
+        });
+      }
+  
+      return successResponse(
+        res,
+        { report },
+        status === "valide" ? "Rapport validé" : "Rapport rejeté",
+      );
+    } catch (error) {
+      console.error("Validate report error:", error);
+      return errorResponse(
+        res,
+        "Erreur lors de la validation du rapport",
+        HTTP_STATUS.INTERNAL_ERROR,
+      );
+    }
+  },
+ /* async validateReport(req, res) {
     try {
       const { id } = req.params;
       const { status, comments } = req.body;
@@ -433,9 +847,57 @@ const reportController = {
         HTTP_STATUS.INTERNAL_ERROR,
       );
     }
-  },
-
+  },*/
   async deleteReport(req, res) {
+    try {
+      const { id } = req.params;
+  
+      const existingReport = await reportService.getReportDetails(id);
+  
+      if (!existingReport) {
+        return notFoundResponse(res, "Rapport introuvable");
+      }
+  
+      const permissions = buildReportPermissions(req.user, existingReport);
+  
+      if (!permissions.canDelete) {
+        return errorResponse(
+          res,
+          "Vous n'avez pas la permission de supprimer ce rapport",
+          HTTP_STATUS.FORBIDDEN,
+        );
+      }
+  
+      const report = await Report.delete(id, req.user.id);
+  
+      if (!report) {
+        return errorResponse(
+          res,
+          "Rapport non trouvé ou impossible à supprimer",
+          HTTP_STATUS.BAD_REQUEST,
+        );
+      }
+  
+      await AuditLog.create({
+        user_id: req.user.id,
+        action: "DELETE",
+        entity_type: "report",
+        entity_id: id,
+        ip_address: req.ip,
+        user_agent: req.get("user-agent"),
+      });
+  
+      return successResponse(res, null, "Rapport supprimé");
+    } catch (error) {
+      console.error("Delete report error:", error);
+      return errorResponse(
+        res,
+        "Erreur lors de la suppression du rapport",
+        HTTP_STATUS.INTERNAL_ERROR,
+      );
+    }
+  },
+  /*async deleteReport(req, res) {
     try {
       const { id } = req.params;
 
@@ -468,13 +930,13 @@ const reportController = {
         HTTP_STATUS.INTERNAL_ERROR,
       );
     }
-  },
+  },*/
 
   /**
    * Add comment
    * POST /api/reports/:id/comments
    */
-  async addComment(req, res) {
+  /*async addComment(req, res) {
     try {
       const { id } = req.params;
       const { content, comment } = req.body;
@@ -514,8 +976,54 @@ const reportController = {
         HTTP_STATUS.INTERNAL_ERROR,
       );
     }
+  },*/
+  async addComment(req, res) {
+    try {
+      const { id } = req.params;
+      const { content, comment } = req.body;
+  
+      const finalContent = content || comment;
+  
+      if (!finalContent || !finalContent.trim()) {
+        return errorResponse(
+          res,
+          "Le commentaire ne peut pas être vide",
+          HTTP_STATUS.BAD_REQUEST,
+        );
+      }
+  
+      const report = await reportService.getReportDetails(id);
+  
+      if (!report) {
+        return notFoundResponse(res, "Rapport introuvable");
+      }
+  
+      const permissions = buildReportPermissions(req.user, report);
+  
+      if (!permissions.canRead) {
+        return errorResponse(res, "Accès refusé", HTTP_STATUS.FORBIDDEN);
+      }
+  
+      const newComment = await Report.addComment(
+        id,
+        req.user.id,
+        finalContent.trim(),
+      );
+  
+      return createdResponse(
+        res,
+        { comment: { ...newComment, content: finalContent.trim() } },
+        "Commentaire ajouté",
+      );
+    } catch (error) {
+      console.error("Add comment error:", error);
+      return errorResponse(
+        res,
+        "Erreur lors de l'ajout du commentaire",
+        HTTP_STATUS.INTERNAL_ERROR,
+      );
+    }
   },
-
   async getComments(req, res) {
     try {
       const { id } = req.params;
@@ -640,18 +1148,18 @@ const reportController = {
     try {
       const { departmentId } = req.params;
       const stats = await Report.getDepartmentStats(departmentId);
-  
+
       return successResponse(
         res,
         { stats },
-        "Department stats retrieved successfully"
+        "Department stats retrieved successfully",
       );
     } catch (error) {
       console.error("Error fetching department stats:", error);
       return errorResponse(
         res,
         "Error retrieving department stats",
-        HTTP_STATUS.INTERNAL_ERROR
+        HTTP_STATUS.INTERNAL_ERROR,
       );
     }
   },
@@ -690,10 +1198,6 @@ const reportController = {
     }
   },
 
-  /**
-   * Generate the report (e.g., PDF generation)
-   * POST /api/reports/generate
-   */
   async generateReport(req, res) {
     const { layout, title, periodStart, periodEnd, departmentId, visibility } =
       req.body;
@@ -712,11 +1216,9 @@ const reportController = {
         period_start: periodStart,
         period_end: periodEnd,
         data: JSON.stringify({ layout }),
-        visibility: visibility || "private", // Default to 'private'
+        visibility: visibility || "private",
       });
-
-      // Implement report generation logic (e.g., generate PDF, handle layout)
-      const pdfPath = await generatePdfReport(report); // This is a placeholder
+      const pdfPath = await generatePdfReport(report);
 
       res
         .status(200)
@@ -726,13 +1228,114 @@ const reportController = {
       res.status(500).json({ message: "Error generating report" });
     }
   },
+
+  async generatePdfReport(report) {
+    const pdfPath = `/path/to/generated/reports/${report.id}.pdf`;
+    return pdfPath;
+  },
+
+  async exportPdf(req, res) {
+    try {
+      const { id } = req.params;
+
+      const report = await reportService.getReportDetails(id);
+
+      if (!report) {
+        return notFoundResponse(res, "Rapport introuvable");
+      }
+
+      const canRead = await reportAccessRequestService.canReadReport({
+        reportId: id,
+        user: req.user,
+      });
+
+      if (!canRead) {
+        return errorResponse(res, "Accès refusé", HTTP_STATUS.FORBIDDEN);
+      }
+
+      const doc = new PDFDocument({
+        size: "A4",
+        margin: 50,
+      });
+
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="rapport_${id}.pdf"`,
+      );
+
+      doc.pipe(res);
+
+      // Header
+      doc.fontSize(20).text(report.title || `Rapport #${report.id}`, {
+        align: "center",
+      });
+
+      doc.moveDown();
+      doc.fontSize(10).text(`Département: ${report.department_name || "—"}`);
+      doc.text(`Auteur: ${report.author_name || "—"}`);
+      doc.text(`Statut: ${report.status || "—"}`);
+      doc.text(
+        `Période: ${report.period_start || "—"} à ${report.period_end || "—"}`,
+      );
+      doc.text(`Créé le: ${report.created_at || "—"}`);
+
+      doc.moveDown();
+      doc.fontSize(14).text("Données", { underline: true });
+      doc.moveDown(0.5);
+
+      let parsedData = report.data;
+
+      if (typeof parsedData === "string") {
+        try {
+          parsedData = JSON.parse(parsedData);
+        } catch {
+          parsedData = { content: parsedData };
+        }
+      }
+
+      const safeWriteObject = (obj, indent = 0) => {
+        if (!obj || typeof obj !== "object") {
+          doc.fontSize(10).text(String(obj ?? "—"), { indent });
+          return;
+        }
+
+        Object.entries(obj).forEach(([key, value]) => {
+          if (typeof value === "object" && value !== null) {
+            doc.fontSize(10).font("Helvetica-Bold").text(`${key}:`, { indent });
+            safeWriteObject(value, indent + 15);
+          } else {
+            doc
+              .fontSize(10)
+              .font("Helvetica")
+              .text(`${key}: ${String(value ?? "—")}`, { indent });
+          }
+        });
+      };
+
+      safeWriteObject(parsedData);
+
+      doc.moveDown();
+      doc.fontSize(12).font("Helvetica-Bold").text("Signatures");
+      doc.moveDown(2);
+
+      doc
+        .fontSize(10)
+        .font("Helvetica")
+        .text(`Établi par: ${report.author_name || "—"}`);
+      doc.moveDown(2);
+      doc.text(`Approuvé par: ${report.validator_name || "En attente"}`);
+
+      doc.end();
+    } catch (error) {
+      console.error("Export PDF error:", error);
+      return errorResponse(
+        res,
+        error.message || "Erreur lors de l'export PDF",
+        HTTP_STATUS.BAD_REQUEST,
+      );
+    }
+  },
 };
-
-// PDF Generation Example (stub, you need to implement actual PDF generation)
-async function generatePdfReport(report) {
-  const pdfPath = `/path/to/generated/reports/${report.id}.pdf`;
-  return pdfPath;
-}
-
 
 module.exports = reportController;

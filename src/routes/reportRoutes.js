@@ -22,6 +22,7 @@ router.post("/custom/generate", reportController.saveTemplate);
 router.post("/generate", reportController.generateReport);
 
 // Détail dynamique à la fin
+
 router.get("/:id", reportController.getReportDetails);
 router.put("/:id", reportController.updateReport);
 router.delete("/:id", reportController.deleteReport);
@@ -32,6 +33,7 @@ router.get("/:id/comments", reportController.getComments);
 router.post("/:id/comments", reportController.addComment);
 router.post("/:id/annotations", reportController.addAnnotation);
 router.get("/:id/export/pdf", reportController.generateReport);
+router.get("/:id/export/pdf", reportController.exportPdf);
 router.post("/:id/validate", authorize("DG"), reportController.validateReport);
 
 module.exports = router;
