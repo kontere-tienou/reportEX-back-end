@@ -125,7 +125,7 @@ INSERT INTO users (
   is_active
 ) VALUES (
   'admin@batex-ci.com',
-  '$2b$10$YourHashedPasswordHere',
+  'Admin123',
   'Administrateur',
   'ADMIN',
   10,
