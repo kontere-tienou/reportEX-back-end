@@ -16,10 +16,7 @@ const AuditLog = require("../models/AuditLog");
  */
 
 const authController = {
-  /**
-   * Login user
-   * POST /api/auth/login
-   */
+
   async login(req, res) {
     try {
       const { email, password } = req.body;
@@ -30,7 +27,6 @@ const authController = {
 
       // Validation
       if (!email || !password) {
-        console.log("❌ Email ou password manquant");
         return errorResponse(
           res,
           "Email et mot de passe requis",
@@ -53,8 +49,7 @@ const authController = {
         [email],
       );
 
-      console.log("Résultat query:", result.rowCount, "ligne(s)");
-
+    
       if (result.rowCount === 0) {
         console.log("❌ Utilisateur non trouvé");
         return unauthorizedResponse(res, "Email ou mot de passe incorrect");
@@ -173,10 +168,6 @@ const authController = {
     }
   },
 
-  /**
-   * Get current user profile
-   * GET /api/auth/profile
-   */
   async getProfile(req, res) {
     try {
       const user = await User.findById(req.userId);
@@ -203,10 +194,6 @@ const authController = {
     }
   },
 
-  /**
-   * Change password
-   * POST /api/auth/change-password
-   */
   async changePassword(req, res) {
     try {
       const { currentPassword, newPassword } = req.body;
@@ -276,10 +263,6 @@ const authController = {
     }
   },
 
-  /**
-   * Register new user (Admin only)
-   * POST /api/auth/register
-   */
   async registerUser(req, res) {
     try {
       const { email, password, full_name, role, department_id, phone } =
@@ -345,10 +328,6 @@ const authController = {
     }
   },
 
-  /**
-   * Logout user
-   * POST /api/auth/logout
-   */
   async logout(req, res) {
     try {
       // Audit log

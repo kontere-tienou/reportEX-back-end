@@ -15,10 +15,6 @@ const { HTTP_STATUS } = require("../config/constants");
  */
 
 const employeeController = {
-  /**
-   * Get all employees with pagination
-   * GET /api/employees
-   */
   async getAllEmployees(req, res) {
     try {
       const { page, limit, department_id, status, contract_type, search } =
@@ -49,10 +45,6 @@ const employeeController = {
     }
   },
 
-  /**
-   * Get single employee
-   * GET /api/employees/:id
-   */
   async getEmployee(req, res) {
     try {
       const { id } = req.params;
@@ -74,10 +66,6 @@ const employeeController = {
     }
   },
 
-  /**
-   * Create employee
-   * POST /api/employees
-   */
   async createEmployee(req, res) {
     try {
       const employeeData = req.body;

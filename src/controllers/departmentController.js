@@ -12,7 +12,6 @@ const { HTTP_STATUS } = require("../config/constants");
  * DEPARTMENT CONTROLLER
  * ==========================================
  */
-
 const departmentController = {
 
   async getAllDepartments(req, res) {
