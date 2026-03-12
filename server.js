@@ -53,8 +53,13 @@ const io = new Server(server, {
 
 app.set("io", io);
 
-// Trust proxy pour les environnements comme Railway
-app.set("trust proxy", true);
+// Instead of just 'true', use a more specific setting
+app.set('trust proxy', 1); // Trust first proxy
+// OR
+app.set('trust proxy', 'loopback, linklocal, uniquelocal');
+// OR if you're behind a known proxy:
+app.set('trust proxy', ['loopback', '192.168.1.1']);
+
 // Middlewares
 app.use(
   helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false }),

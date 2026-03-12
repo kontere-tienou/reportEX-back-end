@@ -335,9 +335,36 @@ const departmentDataController = {
 
       // Add user filter if not admin
       if (!isAdmin) {
+        // Check if userId is a valid UUID
+        const uuidRegex =
+          /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+        if (typeof userId === "object" && userId !== null) {
+          // If userId is an object, you need to extract the actual ID
+          console.error("User ID is an object:", userId);
+          return errorResponse(
+            res,
+            "Invalid user ID format",
+            HTTP_STATUS.INTERNAL_ERROR,
+          );
+        }
+
+        if (!uuidRegex.test(String(userId))) {
+          console.error("User ID is not a valid UUID:", userId);
+          return errorResponse(
+            res,
+            "Invalid user ID format",
+            HTTP_STATUS.INTERNAL_ERROR,
+          );
+        }
+
         conditions.push(`user_id = $${paramIndex++}::uuid`);
         params.push(userId);
       }
+      /*if (!isAdmin) {
+        conditions.push(`user_id = $${paramIndex++}::uuid`);
+        params.push(userId);
+      }*/
 
       const whereClause =
         conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
@@ -395,6 +422,12 @@ const departmentDataController = {
     const { metrics, dateFrom, dateTo, groupBy = "date" } = req.body;
     const userId = req.user.id;
     const isAdmin = ["DG", "ADMIN"].includes(req.user.role?.toUpperCase());
+
+    // Debug logging
+    console.log('User object:', req.user);
+    console.log('User ID type:', typeof userId);
+    console.log('User ID value:', userId);
+    console.log('Is UUID?', /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(userId)));
   
     try {
       const tableName = `${deptCode.toLowerCase()}_data`;
