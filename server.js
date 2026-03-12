@@ -15,27 +15,27 @@ const { requestLogger, requestId } = require("./src/middleware/requestLogger");
 const { generalLimiter } = require("./src/middleware/rateLimiter");
 const { notFound, errorHandler } = require("./src/middleware/errorHandler");
 
+// Couleurs pour les logs console
+const colors = {
+  reset: "\x1b[0m",
+  green: "\x1b[32m",
+  yellow: "\x1b[33m",
+  red: "\x1b[31m",
+  cyan: "\x1b[36m",
+  magenta: "\x1b[35m",
+  blue: "\x1b[34m",
+  pink : "\x1b[35m",
+};
+
 /*
  ==========================================
   BATEX ERP - CONFIGURATION DU SERVEUR
 ==========================================
  */
+
 const isRailway = !!process.env.RAILWAY_SERVICE_ID;
-logger.info("🚀 Démarrage du serveur avec la configuration suivante :", {
-  isRailway,
-});
-// Override config for Railway if needed
 if (isRailway) {
-  console.log("🚂 Running on Railway - adjusting configuration");
-  
-  // Ensure we use Railway-assigned port
-  process.env.PORT = process.env.PORT || '5008';
-  
-  // Log all Railway-specific env vars
-  console.log("Railway specific:");
-  console.log("- RAILWAY_PUBLIC_DOMAIN:", process.env.RAILWAY_PUBLIC_DOMAIN);
-  console.log("- RAILWAY_PRIVATE_DOMAIN:", process.env.RAILWAY_PRIVATE_DOMAIN);
-  console.log("- RAILWAY_ENVIRONMENT:", process.env.RAILWAY_ENVIRONMENT);
+  process.env.PORT = process.env.PORT || "5008";
 }
 
 const app = express();
@@ -51,22 +51,12 @@ const io = new Server(server, {
   pingInterval: 25000,
 });
 
-// Attacher io à l'app pour utilisation dans les contrôleurs
 app.set("io", io);
 
-/**
-  ==========================================
-  CONFIGURATION DES MIDDLEWARES
-  ==========================================
- */
-
+// Middlewares
 app.use(
-  helmet({
-    contentSecurityPolicy: false,
-    crossOriginEmbedderPolicy: false,
-  }),
+  helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false }),
 );
-
 app.use(
   cors({
     origin: config.cors.origin,
@@ -75,251 +65,167 @@ app.use(
     allowedHeaders: ["Content-Type", "Authorization"],
   }),
 );
-
 app.use(compression());
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 app.use(cookieParser());
 app.use(requestId);
+app.use(generalLimiter);
+app.use("/uploads", express.static("uploads"));
 
 if (config.server.env !== "test") {
   app.use(requestLogger);
 }
 
-app.use(generalLimiter);
-app.use("/uploads", express.static("uploads"));
-
-
+// Routes
 app.get("/api/reports/builder", async (req, res) => {
   try {
     res.status(200).json({ message: "Report Builder Initialized" });
   } catch (error) {
-    console.error("Error initializing report builder:", error);
+    console.error(
+      `${colors.red}❌ Erreur report builder:${colors.reset}`,
+      error.message,
+    );
     res.status(500).json({ message: "Error initializing report builder" });
   }
 });
 
 configureRoutes(app);
-
-// 404 Non Trouvé
 app.use(notFound);
-
-// Gestionnaire d'erreurs global
 app.use(errorHandler);
 
+// Socket.IO
 const connectedUsers = new Map();
 
 io.on("connection", (socket) => {
-  logger.info("Socket.IO : Nouveau client connecté", {
-    socketId: socket.id,
-    ip: socket.handshake.address,
-  });
+  logger.info("📱 Client Socket.IO connecté", { socketId: socket.id });
 
-  /**
-   * Authentification de l'utilisateur et adhésion aux salles
-   */
   socket.on("authenticate", (userId) => {
-    if (!userId) {
-      logger.warn("Socket.IO : Échec d'authentification - userId manquant");
-      return;
-    }
-
+    if (!userId) return;
     connectedUsers.set(userId, socket.id);
     socket.join(`user:${userId}`);
-
-    logger.info("Socket.IO : Utilisateur authentifié", {
-      userId,
-      socketId: socket.id,
-    });
-
-    socket.emit("authenticated", {
-      success: true,
-      userId,
-      socketId: socket.id,
-      message: "Authentification réussie",
-    });
-
-    // Diffuser le statut en ligne
     io.emit("user:online", { userId });
+    logger.info("👤 Utilisateur authentifié", { userId });
   });
 
-  /**
-   * Rejoindre une salle de département
-   */
   socket.on("join:department", (departmentId) => {
     if (!departmentId) return;
     socket.join(`department:${departmentId}`);
-    logger.info("Socket.IO : Salle de département rejointe", {
-      departmentId,
-      socketId: socket.id,
-    });
   });
 
-  /**
-   * Quitter une salle de département
-   */
   socket.on("leave:department", (departmentId) => {
     if (!departmentId) return;
     socket.leave(`department:${departmentId}`);
-    logger.info("Socket.IO : Salle de département quittée", {
-      departmentId,
-      socketId: socket.id,
-    });
   });
 
-  /**
-   * Notification en temps réel
-   */
   socket.on("notification:send", (data) => {
     const { userId, notification } = data;
-
-    if (!userId || !notification) {
-      logger.warn("Socket.IO : Données de notification invalides");
-      return;
-    }
-
+    if (!userId || !notification) return;
     io.to(`user:${userId}`).emit("notification:new", notification);
-    logger.info("Socket.IO : Notification envoyée", {
-      userId,
-      type: notification.type,
-    });
   });
 
-  /**
-   * Indicateurs de saisie
-   */
-  socket.on("typing:start", (data) => {
-    const { room, userId, userName } = data;
-    socket.to(room).emit("typing:user", { userId, userName, typing: true });
-  });
-
-  socket.on("typing:stop", (data) => {
-    const { room, userId } = data;
-    socket.to(room).emit("typing:user", { userId, typing: false });
-  });
-
-  /**
-   * Gestion de la déconnexion
-   */
   socket.on("disconnect", () => {
     for (const [userId, socketId] of connectedUsers.entries()) {
       if (socketId === socket.id) {
         connectedUsers.delete(userId);
         io.emit("user:offline", { userId });
-        logger.info("Socket.IO : Utilisateur déconnecté", {
-          userId,
-          socketId: socket.id,
-        });
+        logger.info("👤 Utilisateur déconnecté", { userId });
         break;
       }
     }
-    logger.info("Socket.IO : Client déconnecté", { socketId: socket.id });
+    logger.info("📱 Client Socket.IO déconnecté", { socketId: socket.id });
   });
 
   socket.on("error", (error) => {
-    logger.error("Socket.IO : Erreur de socket", {
-      socketId: socket.id,
-      error: error.message,
-    });
+    logger.error("❌ Erreur Socket.IO", { error: error.message });
   });
 });
 
 /**
  * ==========================================
- * VÉRIFICATION DE LA BASE DE DONNÉES
+ * VÉRIFICATION DB & DÉMARRAGE
  * ==========================================
  */
 
 const checkDatabase = async () => {
   try {
     await pool.query("SELECT NOW()");
-    logger.info("✅ Connexion à la base de données réussie");
+    console.log(`${colors.green}✅ Base de données connectée${colors.reset}`);
     return true;
   } catch (error) {
-    logger.error("❌ Échec de la connexion à la base de données :", error);
+    logger.error("❌ Échec connexion DB:", error.message);
     return false;
   }
 };
 
-/**
- * ==========================================
- * DÉMARRAGE DU SERVEUR
- * ==========================================
- */
-
 const startServer = async () => {
   try {
     const dbConnected = await checkDatabase();
-
     if (!dbConnected) {
-      logger.error("Impossible de démarrer le serveur - Échec connexion DB");
+      console.log(`${colors.red}❌ Arrêt - Pas de connexion DB${colors.reset}`);
       process.exit(1);
     }
 
     const PORT = config.server.port;
-
     server.listen(PORT, () => {
-      logger.info("==========================================");
-      logger.info("🚧 SERVEUR BATEX ERP DÉMARRÉ");
-      logger.info("==========================================");
-      logger.info(`Environnement : ${config.server.env}`);
-      logger.info(`Port : ${PORT}`);
-      logger.info(`URL API : http://localhost:${PORT}`);
-      logger.info(`Santé : http://localhost:${PORT}/health`);
-      logger.info(`Socket.IO : Activé`);
-      logger.info("==========================================");
+      console.log(
+        `\n${colors.pink}|═══════════════════════════════════════════${colors.reset}`,
+      );
+      console.log(`${colors.green}|  🚀 SERVEUR DÉMARRÉ${colors.reset}`);
+      console.log(
+        `${colors.pink}|═══════════════════════════════════════════${colors.reset}`,
+      );
+      console.log(`${colors.cyan}|  📍 Environnement : ${config.server.env}`);
+      console.log(`${colors.magenta}|  🔌 Port : ${PORT}`);
+      console.log(`${colors.yellow}|  🌐 API : http://localhost:${PORT}`);
+      console.log(`${colors.green}|  💓 Health : http://localhost:${PORT}/health`);
+      console.log(`${colors.blue}|  📡 Socket.IO : Activé`);
+      console.log(
+        `${colors.pink}|═══════════════════════════════════════════${colors.reset}\n`,
+      );
     });
   } catch (error) {
-    logger.error("Échec du démarrage du serveur :", error);
+    logger.error("❌ Échec démarrage:", error.message);
     process.exit(1);
   }
 };
 
-/**
- * ==========================================
- * ARRÊT GRACIEUX (GRACEFUL SHUTDOWN)
- * ==========================================
- */
-
+// Arrêt gracieux
 const gracefulShutdown = async (signal) => {
-  logger.info(`Signal ${signal} reçu. Début de l'arrêt gracieux...`);
+  console.log(
+    `\n${colors.yellow}🔄 Arrêt du serveur (${signal})...${colors.reset}`,
+  );
+  logger.info(`Arrêt demandé via ${signal}`);
 
   server.close(async () => {
-    logger.info("Serveur HTTP fermé");
-
-    try {
-      await closePool();
-      logger.info("Pool de base de données fermé");
-
-      io.close(() => {
-        logger.info("Serveur Socket.IO fermé");
-      });
-
-      logger.info("Arrêt gracieux terminé");
-      process.exit(0);
-    } catch (error) {
-      logger.error("Erreur lors de l'arrêt :", error);
-      process.exit(1);
-    }
+    await closePool();
+    io.close();
+    console.log(`${colors.green}✅ Serveur arrêté${colors.reset}`);
+    process.exit(0);
   });
 
   setTimeout(() => {
-    logger.error("Arrêt forcé après délai d'attente");
+    console.log(`${colors.red}❌ Arrêt forcé${colors.reset}`);
     process.exit(1);
-  }, 30000);
+  }, 10000);
 };
 
 process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
 process.on("SIGINT", () => gracefulShutdown("SIGINT"));
 
 process.on("uncaughtException", (error) => {
-  logger.error("Exception non capturée :", error);
+  console.log(
+    `${colors.red}❌ Exception non capturée:${colors.reset}`,
+    error.message,
+  );
   gracefulShutdown("uncaughtException");
 });
 
-process.on("unhandledRejection", (reason, promise) => {
-  logger.error("Rejet de promesse non géré à :", promise, "raison :", reason);
-  gracefulShutdown("unhandledRejection");
+process.on("unhandledRejection", (reason) => {
+  console.log(
+    `${colors.red}❌ Rejection non gérée:${colors.reset}`,
+    reason?.message || reason,
+  );
 });
 
 if (require.main === module) {
