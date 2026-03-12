@@ -40,71 +40,9 @@ console.log(
   `${colors.magenta}═══════════════════════════════════════════${colors.reset}\n`,
 );
 
-// ============================================
-// 1. CHARGEMENT DES VARIABLES D'ENVIRONNEMENT
-// ============================================
-log(colors.cyan, "📁", "Chargement des variables d'environnement...");
-
-const envLocalPath = path.resolve(process.cwd(), ".env.local");
-const envPath = path.resolve(process.cwd(), ".env");
-
-if (fs.existsSync(envLocalPath)) {
-  dotenv.config({ path: envLocalPath });
-  log(colors.green, "✅", "Fichier .env.local chargé");
-} else if (fs.existsSync(envPath)) {
-  dotenv.config({ path: envPath });
-  log(colors.green, "✅", "Fichier .env chargé");
-} else {
-  log(
-    colors.yellow,
-    "⚠️",
-    "Aucun fichier .env trouvé, utilisation des variables système",
-  );
-}
 
 // ============================================
-// 2. VÉRIFICATION DE DATABASE_URL
-// ============================================
-console.log(
-  `\n${colors.cyan}🔍 Vérification de la configuration...${colors.reset}`,
-);
-
-if (!process.env.DATABASE_URL) {
-  log(colors.red, "❌", "DATABASE_URL non définie !");
-  console.log(
-    `\n${colors.yellow}📋 Pour utiliser Railway PostgreSQL, définissez :${colors.reset}`,
-  );
-  console.log(
-    `${colors.dim}   DATABASE_URL=postgresql://utilisateur:motdepasse@hôte:port/base${colors.reset}`,
-  );
-  console.log(`\n${colors.cyan}Exemple avec ta base Railway :${colors.reset}`);
-  console.log(
-    `${colors.green}   $env:DATABASE_URL="postgresql://postgres:prPOzGDsHemefQJFNFTCOSRuePYVfBvN@switchback.proxy.rlwy.net:57664/railway"${colors.reset}`,
-  );
-  process.exit(1);
-}
-
-// Afficher l'URL masquée
-const maskedUrl = process.env.DATABASE_URL.replace(/:[^:]*@/, ":***@");
-log(colors.green, "✅", "DATABASE_URL trouvée:", maskedUrl);
-
-// ============================================
-// 3. GÉNÉRATION DU MOT DE PASSE ADMIN
-// ============================================
-console.log(
-  `\n${colors.cyan}🔐 Génération du mot de passe admin...${colors.reset}`,
-);
-
-async function generateAdminHash() {
-  const adminPassword = "Admin123!";
-  const salt = await bcrypt.genSalt(10);
-  const hash = await bcrypt.hash(adminPassword, salt);
-  log(colors.green, "✅", "Mot de passe admin généré");
-  return { hash, plainPassword: adminPassword };
-}
-
-// ============================================
-// 4. INITIALISATION DE LA BASE
+// INITIALISATION DE LA BASE
 // ============================================
 async function initDatabase() {
   const pool = null;
@@ -121,7 +59,7 @@ async function initDatabase() {
     const pool = new Pool({
       connectionString: process.env.DATABASE_URL,
       ssl: {
-        rejectUnauthorized: false, // Nécessaire pour Railway
+        rejectUnauthorized: false,
       },
       connectionTimeoutMillis: 10000,
     });
@@ -208,32 +146,12 @@ async function initDatabase() {
     `);
 
     if (admin.rows.length > 0) {
+      const adminInfo = admin.rows[0];
       console.log(
-        `\n${colors.green}✅ Utilisateur ADMIN créé :${colors.reset}`,
-      );
-      console.log(`${colors.cyan}  • ID:${colors.reset} ${admin.rows[0].id}`);
-      console.log(
-        `${colors.cyan}  • Email:${colors.reset} ${admin.rows[0].email}`,
-      );
-      console.log(
-        `${colors.cyan}  • Nom:${colors.reset} ${admin.rows[0].full_name}`,
-      );
-      console.log(
-        `${colors.cyan}  • Rôle:${colors.reset} ${admin.rows[0].role}`,
-      );
-      console.log(
-        `${colors.cyan}  • Créé le:${colors.reset} ${admin.rows[0].created_at}`,
-      );
-      console.log(
-        `\n${colors.yellow}🔐 Identifiants de connexion :${colors.reset}`,
-      );
-      console.log(
-        `  • Email: ${colors.bright}${admin.rows[0].email}${colors.reset}`,
-      );
-      console.log(
-        `  • Mot de passe: ${colors.bright}${plainPassword}${colors.reset} (à changer à la première connexion)`,
+        `\n${colors.yellow}👤 Compte Admin:${colors.reset} ${adminInfo.email}`,
       );
     }
+     
 
     // Vérifier les contraintes et index
     const indexes = await pool.query(`

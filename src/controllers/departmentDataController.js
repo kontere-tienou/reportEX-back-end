@@ -259,6 +259,8 @@ const departmentDataController = {
     const { deptCode } = req.params;
     const { metrics, dateFrom, dateTo, groupBy } = req.body;
     const userId = req.user.id;
+    console.log("User ID type:", typeof userId);
+    console.log("User ID value:", userId);
     const isAdmin = ["DG", "ADMIN"].includes(req.user.role?.toUpperCase());
 
     try {
@@ -624,6 +626,8 @@ const departmentDataController = {
   async getBatchStats(req, res) {
     const { departments } = req.body;
     const userId = req.user.id;
+    console.log("User ID type:", typeof userId);
+    console.log("User ID value:", userId);
    // const isAdmin = ["DG", "ADMIN"].includes(req.user.role?.toUpperCase());
 
     try {
