@@ -15,7 +15,7 @@ const AuditLog = require("./AuditLog");
 module.exports = {
   User,
   Department,
-  Employee,
+  //Employee,
   Notification,
   AuditLog,
 };
