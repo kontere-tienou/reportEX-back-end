@@ -89,8 +89,8 @@ const createLimiter = (windowMinutes, maxRequests) => {
 
 
 const batchLimiter = rateLimit({
-    windowMs: 60 * 1000, // 1 minute
-    max: 60, // 60 batch requests per minute
+    windowMs: 10* 60 * 1000,
+    max: 100, 
     message: {
         success: false,
         message: 'Batch request limit reached.'
