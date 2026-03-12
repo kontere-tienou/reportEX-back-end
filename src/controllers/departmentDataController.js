@@ -17,8 +17,6 @@ const db = require("../config/database");
  */
 
 const departmentDataController = {
- 
-  
   async getAll(req, res) {
     try {
       const { deptCode } = req.params;
@@ -39,9 +37,13 @@ const departmentDataController = {
           sortOrder,
         },
         userId,
-        console.log("Result from service:", result 
-          ? { dataLength: result.data.length, pagination: result.pagination }
-          : "No result returned from service", typeof result, userId
+        console.log(
+          "Result from service:",
+          result
+            ? { dataLength: result.data.length, pagination: result.pagination }
+            : "No result returned from service",
+          typeof result,
+          userId,
         ),
       );
 
@@ -67,7 +69,6 @@ const departmentDataController = {
 
       if (!isUuid(id)) {
         return errorResponse(res, "ID invalide", 400);
-        
       }
       console.log("Invalid ID format:", typeof isUuid);
       const data = await departmentDataService.getById(deptCode, id);
@@ -94,7 +95,7 @@ const departmentDataController = {
       const userId = req.userId;
 
       console.log("Creating data for department:", deptCode);
-      console.log("User ID:",typeof userId);
+      console.log("User ID:", typeof userId);
       console.log("Data:", data);
 
       // Validate required fields
@@ -186,10 +187,10 @@ const departmentDataController = {
   async getStats(req, res) {
     try {
       const { deptCode } = req.params;
-      const userId = req.user?.role? null : req.userId;
+      const userId = req.user?.role ? null : req.userId;
 
       console.log("Getting stats for department:", deptCode);
-      console.log("User ID:",  typeof userId);
+      console.log("User ID:", typeof userId);
 
       const stats = await departmentDataService.getStats(deptCode, userId);
 
@@ -358,7 +359,7 @@ const departmentDataController = {
           );
         }
 
-        conditions.push(`user_id = $${paramIndex++}::uuid`);
+        conditions.push(`user_id = $${paramIndex++}`);
         params.push(userId);
       }
       /*if (!isAdmin) {
@@ -416,8 +417,166 @@ const departmentDataController = {
       );
     }
   },
-
+  
   async getBatchChartData(req, res) {
+    const { deptCode } = req.params;
+    const { metrics, dateFrom, dateTo, groupBy = "date" } = req.body;
+    const userId = req.user.id;
+    const isAdmin = ["DG", "ADMIN"].includes(req.user.role?.toUpperCase());
+
+    // Debug logging
+    console.log("User object:", req.user);
+    console.log("User ID type:", typeof userId);
+    console.log("User ID value:", userId);
+    console.log(
+      "Is UUID?",
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+        String(userId),
+      ),
+    );
+
+    try {
+      const tableName = `${deptCode.toLowerCase()}_data`;
+
+      // 1) Get real columns from DB
+      const columnsResult = await db.query(
+        `SELECT column_name
+         FROM information_schema.columns
+         WHERE table_name = $1`,
+        [tableName],
+      );
+
+      const existingColumns = columnsResult.rows.map((row) => row.column_name);
+
+      // 2) Keep only valid metrics
+      const validMetrics = (metrics || []).filter((m) =>
+        existingColumns.includes(m.field),
+      );
+
+      if (validMetrics.length === 0) {
+        return successResponse(res, [], "Aucune métrique valide trouvée");
+      }
+
+      // 3) Sanitize groupBy too
+      const safeGroupBy = existingColumns.includes(groupBy) ? groupBy : "date";
+
+      // 4) Build SELECT
+      const metricSelects = validMetrics
+        .map((m) => {
+          const field = m.field;
+          const agg = m.aggregation || "sum";
+
+          switch (agg) {
+            case "sum":
+              return `COALESCE(SUM(${field}), 0) as "${field}_sum"`;
+            case "avg":
+              return `COALESCE(AVG(${field}), 0) as "${field}_avg"`;
+            case "max":
+              return `COALESCE(MAX(${field}), 0) as "${field}_max"`;
+            case "min":
+              return `COALESCE(MIN(${field}), 0) as "${field}_min"`;
+            default:
+              return `COALESCE(SUM(${field}), 0) as "${field}_sum"`;
+          }
+        })
+        .join(", ");
+
+      const conditions = [];
+      const params = [];
+      let paramIndex = 1;
+
+      if (dateFrom) {
+        conditions.push(`date >= $${paramIndex++}`);
+        params.push(dateFrom);
+      }
+
+      if (dateTo) {
+        conditions.push(`date <= $${paramIndex++}`);
+        params.push(dateTo);
+      }
+
+      if (!isAdmin) {
+        // IMPORTANT: Get the actual UUID from users table
+        // First, let's find out what the id column is called in users table
+        // It might be 'id', 'user_id', or something else
+
+        // Try to get the user's UUID from the database
+        // First, check if users table has an 'id' column that contains UUIDs
+        const userQuery = await db.query(
+          `SELECT id FROM users WHERE email = $1`,
+          [req.user.email],
+        );
+
+        if (userQuery.rows.length > 0) {
+          const actualUuid = userQuery.rows[0].id;
+          console.log(`Found UUID for user ${userId}: ${actualUuid}`);
+          conditions.push(`user_id = $${paramIndex++}`);
+          params.push(actualUuid);
+        } else {
+          // Fallback: try to find by integer ID if there's a mapping column
+          const userByIdQuery = await db.query(
+            `SELECT id FROM users WHERE integer_id = $1 OR id::text LIKE $2`,
+            [userId, `%${userId}`],
+          );
+
+          if (userByIdQuery.rows.length > 0) {
+            const actualUuid = userByIdQuery.rows[0].id;
+            console.log(`Found UUID via fallback: ${actualUuid}`);
+            conditions.push(`user_id = $${paramIndex++}`);
+            params.push(actualUuid);
+          } else {
+            // If we can't find the UUID, return an error
+            return errorResponse(
+              res,
+              "User UUID not found in database",
+              HTTP_STATUS.INTERNAL_ERROR,
+            );
+          }
+        }
+      }
+
+      const whereClause =
+        conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+
+      const query = `
+        SELECT
+          ${safeGroupBy},
+          ${metricSelects}
+        FROM ${tableName}
+        ${whereClause}
+        GROUP BY ${safeGroupBy}
+        ORDER BY ${safeGroupBy} ASC
+      `;
+
+      console.log("Batch chart query:", query);
+      console.log("Params:", params);
+
+      const result = await db.query(query, params);
+
+      const chartData = result.rows.map((row) => {
+        const dataPoint = { [safeGroupBy]: row[safeGroupBy] };
+
+        validMetrics.forEach((m) => {
+          const field = m.field;
+          const agg = m.aggregation || "sum";
+          dataPoint[field] = row[`${field}_${agg}`] || 0;
+        });
+
+        return dataPoint;
+      });
+
+      return successResponse(res, chartData, "Batch chart data retrieved");
+    } catch (error) {
+      console.error("Get batch chart data error:", error);
+      return errorResponse(
+        res,
+        "Error retrieving batch chart data: " + error.message,
+        HTTP_STATUS.INTERNAL_ERROR,
+      );
+    }
+  },
+
+  /*async getBatchChartData(req, res) {
     const { deptCode } = req.params;
     const { metrics, dateFrom, dateTo, groupBy = "date" } = req.body;
     const userId = req.user.id;
@@ -490,7 +649,7 @@ const departmentDataController = {
       }
   
       if (!isAdmin) {
-        conditions.push(`user_id = $${paramIndex++}::uuid`);
+        conditions.push(`user_id = $${paramIndex++}`);
         params.push(userId);
       }
   
@@ -533,16 +692,15 @@ const departmentDataController = {
         HTTP_STATUS.INTERNAL_ERROR
       );
     }
-  },
- 
+  },*/
 
   async getPieData(req, res) {
     try {
       const { deptCode } = req.params;
       const { fields, dateFrom, dateTo } = req.body;
-  
+
       const table = `${deptCode.toLowerCase()}_data`;
-  
+
       const result = await db.query(
         `
         SELECT ${fields[0]} AS name,
@@ -552,19 +710,18 @@ const departmentDataController = {
         GROUP BY ${fields[0]}
         ORDER BY value DESC
         `,
-        [dateFrom, dateTo]
+        [dateFrom, dateTo],
       );
-  
+
       res.json({
         success: true,
-        data: result.rows
+        data: result.rows,
       });
-  
     } catch (error) {
       console.error("Pie chart error:", error);
       res.status(500).json({
         success: false,
-        message: "Erreur récupération données pie chart"
+        message: "Erreur récupération données pie chart",
       });
     }
   },
@@ -573,7 +730,7 @@ const departmentDataController = {
     const userId = req.user.id;
     console.log("User ID type:", typeof userId);
     console.log("User ID value:", userId);
-   // const isAdmin = ["DG", "ADMIN"].includes(req.user.role?.toUpperCase());
+    // const isAdmin = ["DG", "ADMIN"].includes(req.user.role?.toUpperCase());
 
     try {
       if (!departments || !Array.isArray(departments)) {
