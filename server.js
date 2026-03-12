@@ -53,6 +53,8 @@ const io = new Server(server, {
 
 app.set("io", io);
 
+// Trust proxy pour les environnements comme Railway
+app.set("trust proxy", true);
 // Middlewares
 app.use(
   helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false }),
