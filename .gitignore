@@ -18,7 +18,7 @@ Thumbs.db
 .env
 .env.local
 .env.*.local
-.sql
+*.sql
 
 !.env.example
 # IDE and editor settings
