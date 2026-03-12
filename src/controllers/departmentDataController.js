@@ -39,6 +39,10 @@ const departmentDataController = {
           sortOrder,
         },
         userId,
+        console.log("Result from service:", result 
+          ? { dataLength: result.data.length, pagination: result.pagination }
+          : "No result returned from service", typeof result, userId
+        ),
       );
 
       return paginatedResponse(
