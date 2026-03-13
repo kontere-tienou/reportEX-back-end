@@ -129,11 +129,10 @@ class DepartmentData {
 
   /**
    * Create new data entry
-   */
+   
   static async create(deptCode, data) {
     try {
       const tableName = this.getTableName(deptCode);
-      const id = uuidv4();
       const now = new Date().toISOString();
 
       const { date, user_id, ...otherFields } = data;
@@ -164,6 +163,35 @@ class DepartmentData {
             VALUES (${placeholders})
             RETURNING *
         `;
+      const result = await db.query(query, values);
+      return result.rows[0];
+    } catch (error) {
+      console.error("Model create error:", error);
+      throw error;
+    }
+  }*/
+  static async create(deptCode, data) {
+    try {
+      const tableName = this.getTableName(deptCode);
+      const now = new Date().toISOString();
+      const { date, user_id, ...otherFields } = data;
+      const fields = [
+        "date",
+        "user_id",
+        "created_at",
+        "updated_at",
+        ...Object.keys(otherFields),
+      ];
+
+      const values = [date, user_id, now, now, ...Object.values(otherFields)];
+
+      const placeholders = fields.map((_, index) => `$${index + 1}`).join(", ");
+
+      const query = `
+              INSERT INTO ${tableName} (${fields.join(", ")})
+              VALUES (${placeholders})
+              RETURNING *
+          `;
 
       console.log("Create query:", query);
       console.log("Create values:", values);
@@ -176,9 +204,6 @@ class DepartmentData {
     }
   }
 
-  /**
-   * Update data entry
-   */
   static async update(deptCode, id, data) {
     const tableName = this.getTableName(deptCode);
     const now = new Date().toISOString();
@@ -341,9 +366,7 @@ class DepartmentData {
     const calc = m.calculation || m.aggregation || "sum";
     const aggregates = validMetrics
       .map((m) => {
-        switch (
-          calc 
-        ) {
+        switch (calc) {
           case "sum":
             return `COALESCE(SUM(${m.field}), 0) as "${m.field}_sum"`;
           case "avg":
