@@ -359,7 +359,7 @@ const DEPARTMENT_DATA_SCHEMAS = {
     ],
   },
 
-  IT: {
+  INFORMATIQUE: {
     endpoint: "/api/it-data",
     tableName: "it_data",
     fields: [
