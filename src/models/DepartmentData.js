@@ -17,7 +17,7 @@ class DepartmentData {
       CONFECTION: "confection_data",
       TEINTURE: "teinture_data",
       PRODUCTION: "production_data",
-      IT: "it_data",
+      INFORMATIQUE: "it_data",
       RH: "rh_data",
       ACHATS: "achat_data",
       BUREAU_ETUDE: "bureau_etude_data",
