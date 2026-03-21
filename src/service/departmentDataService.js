@@ -1,3 +1,4 @@
+// departmentDataService.js
 const DepartmentData = require("../models/DepartmentData");
 const { ValidationError } = require("../middleware/errorHandler");
 const { getDepartmentSchema } = require("../config/departmentSchema");
@@ -14,21 +15,20 @@ class DepartmentDataService {
     this.CACHE_TTL = {
       AGGREGATED: 2 * 60 * 1000, // 2 minutes
       STATS: 5 * 60 * 1000, // 5 minutes
-      LIST: 30 * 1000, // 30 seconds
+      LIST: 30 * 1000, // 30 secondes
     };
   }
 
-  /**
-   * Generate cache key
-   */
   _getCacheKey(prefix, deptCode, options = {}, userId = null) {
-    return `${prefix}_${deptCode}_${userId || "all"}_${JSON.stringify(options)}`;
+    // On exclut _t du cache key pour que le cache-busting frontend
+    // soit ignoré ici (le cache est géré côté service, pas par timestamp)
+    const { _t, ...stableOptions } = options;
+    return `${prefix}_${deptCode}_${userId || "all"}_${JSON.stringify(stableOptions)}`;
   }
 
   async _cached(prefix, deptCode, ttl, options = {}, userId = null, fn) {
     const cacheKey = this._getCacheKey(prefix, deptCode, options, userId);
 
-    // Check cache
     if (this.cache.has(cacheKey)) {
       const cached = this.cache.get(cacheKey);
       if (Date.now() - cached.timestamp < ttl) {
@@ -37,15 +37,8 @@ class DepartmentDataService {
       this.cache.delete(cacheKey);
     }
 
-    // Execute function
     const data = await fn();
-
-    // Store in cache
-    this.cache.set(cacheKey, {
-      data,
-      timestamp: Date.now(),
-    });
-
+    this.cache.set(cacheKey, { data, timestamp: Date.now() });
     return data;
   }
 
@@ -67,16 +60,22 @@ class DepartmentDataService {
       async () => {
         const { page, limit, dateFrom, dateTo, sortBy, sortOrder } = options;
 
-        // Validate date range
+        // ✅ FIX : La limite 90 jours ne s'applique QUE si dateFrom ET dateTo
+        // sont tous les deux fournis ET explicitement demandés.
+        // Sans filtre de date (cas du dashboard qui veut tout l'historique),
+        // on ne bloque pas.
         if (dateFrom && dateTo) {
           const daysDiff = this._getDaysDiff(dateFrom, dateTo);
-          if (daysDiff > 90) {
-            throw new Error("La période ne peut pas dépasser 90 jours");
+          if (daysDiff > 365) {
+            // On monte la limite à 1 an (365j) pour couvrir les dashboards annuels
+            throw new Error("La période ne peut pas dépasser 365 jours");
           }
         }
 
         const result = await DepartmentData.findAll(deptCode, {
           page: page ? parseInt(page) : undefined,
+          // ✅ FIX : Si limit n'est pas spécifié, on récupère tout (pas de limite)
+          //         Le frontend envoie limit=1000 pour l'historique complet
           limit: limit ? parseInt(limit) : undefined,
           dateFrom,
           dateTo,
@@ -97,18 +96,15 @@ class DepartmentDataService {
       options,
       null,
       async () => {
-        // Validate and limit options
         const { dateFrom, dateTo, groupBy, metrics = [] } = options;
 
-        // Limit date range
         if (dateFrom && dateTo) {
           const daysDiff = this._getDaysDiff(dateFrom, dateTo);
-          if (daysDiff > 90) {
-            throw new Error("La période ne peut pas dépasser 90 jours");
+          if (daysDiff > 365) {
+            throw new Error("La période ne peut pas dépasser 365 jours");
           }
         }
 
-        // Limit number of metrics
         const safeMetrics = Array.isArray(metrics) ? metrics.slice(0, 5) : [];
 
         return await DepartmentData.getAggregated(deptCode, {
@@ -142,10 +138,8 @@ class DepartmentDataService {
 
   async create(deptCode, data, userId) {
     try {
-      // Validate data against schema
       const schema = getDepartmentSchema(deptCode);
 
-      // Check required fields
       const requiredFields = schema.fields.filter((f) => f.required);
       for (const field of requiredFields) {
         if (!data[field.key] && data[field.key] !== 0) {
@@ -153,16 +147,11 @@ class DepartmentDataService {
         }
       }
 
-      // Add user_id to data
-      const dataWithUser = {
-        ...data,
-        user_id: userId,
-      };
-
-      // Create in database
+      const dataWithUser = { ...data, user_id: userId };
       const newData = await DepartmentData.create(deptCode, dataWithUser);
 
-      // Clear cache for this department
+      // ✅ FIX : clearCache APRÈS la création — le prochain getAll
+      //         ira chercher les données fraîches en DB
       this.clearCache(deptCode);
 
       return newData;
@@ -173,38 +162,26 @@ class DepartmentDataService {
   }
 
   async update(deptCode, id, data, userId) {
-    // Check existence
     const existing = await DepartmentData.findById(deptCode, id);
-    if (!existing) {
-      throw new Error("Donnée non trouvée");
-    }
+    if (!existing) throw new Error("Donnée non trouvée");
 
-    // Validate
     this.validateData(deptCode, data);
-
-    // Prepare
     const preparedData = this.prepareData(deptCode, data, userId);
-
-    // Update
     const updated = await DepartmentData.update(deptCode, id, preparedData);
 
-    // Clear cache
+    // ✅ clearCache après update
     this.clearCache(deptCode);
 
     return updated;
   }
 
   async delete(deptCode, id, userId) {
-    // Check existence
     const existing = await DepartmentData.findById(deptCode, id);
-    if (!existing) {
-      throw new Error("Donnée non trouvée");
-    }
+    if (!existing) throw new Error("Donnée non trouvée");
 
-    // Delete
     const deleted = await DepartmentData.delete(deptCode, id);
 
-    // Clear cache
+    // ✅ clearCache après delete
     this.clearCache(deptCode);
 
     return deleted;
@@ -214,19 +191,16 @@ class DepartmentDataService {
     const schema = getDepartmentSchema(deptCode);
     const errors = [];
 
-    // Check required fields
     schema.fields.forEach((field) => {
       if (field.required && !data[field.key] && data[field.key] !== 0) {
         errors.push(`Le champ "${field.label}" est requis`);
       }
 
-      // Type validation
       if (data[field.key] !== undefined && data[field.key] !== null) {
         if (field.type === "number" && isNaN(parseFloat(data[field.key]))) {
           errors.push(`Le champ "${field.label}" doit être un nombre`);
         }
 
-        // Min/max validation
         if (field.type === "number") {
           const value = parseFloat(data[field.key]);
           if (field.min !== undefined && value < field.min) {
@@ -239,7 +213,6 @@ class DepartmentDataService {
       }
     });
 
-    // Validate machines data if present
     if (schema.machines && data.machines_data) {
       Object.entries(data.machines_data).forEach(([key, value]) => {
         if (value && isNaN(parseFloat(value))) {
@@ -257,13 +230,11 @@ class DepartmentDataService {
 
   prepareData(deptCode, data, userId) {
     const prepared = { ...data, user_id: userId };
-
-    // Parse JSON fields
     const schema = getDepartmentSchema(deptCode);
+
     schema.fields.forEach((field) => {
       if (field.type === "textarea" && prepared[field.key]) {
         try {
-          // Try to parse as JSON if it looks like JSON
           if (
             prepared[field.key].trim().startsWith("{") ||
             prepared[field.key].trim().startsWith("[")
@@ -271,7 +242,7 @@ class DepartmentDataService {
             prepared[field.key] = JSON.parse(prepared[field.key]);
           }
         } catch {
-          // Keep as string if not valid JSON
+          // Keep as string
         }
       }
     });
@@ -281,33 +252,23 @@ class DepartmentDataService {
 
   async getById(deptCode, id) {
     const data = await DepartmentData.findById(deptCode, id);
-    if (!data) {
-      throw new Error("Donnée non trouvée");
-    }
+    if (!data) throw new Error("Donnée non trouvée");
     return data;
   }
 
   async exportData(deptCode, options = {}) {
-    const data = await DepartmentData.exportData(deptCode, options);
-    return data;
+    return await DepartmentData.exportData(deptCode, options);
   }
 
   generateCSV(data) {
-    if (!data || data.length === 0) {
-      return "";
-    }
+    if (!data || data.length === 0) return "";
 
     const headers = Object.keys(data[0]);
-    const csvRows = [];
+    const csvRows = [headers.join(",")];
 
-    // Headers
-    csvRows.push(headers.join(","));
-
-    // Data rows
     for (const row of data) {
       const values = headers.map((header) => {
         const value = row[header];
-        // Escape commas and quotes
         if (value === null || value === undefined) return "";
         if (
           typeof value === "string" &&
@@ -327,34 +288,18 @@ class DepartmentDataService {
   }
 
   async getMetric(deptCode, field, calculation, options = {}) {
-    const metrics = [
-      {
-        field,
-        calculation,
-      },
-    ];
-
     const result = await this.getAggregated(deptCode, {
       ...options,
-      metrics,
+      metrics: [{ field, calculation }],
     });
 
-    if (!result || result.length === 0) {
-      return 0;
-    }
-
-    const key = `${calculation}_${field}`;
-
-    return result[0][key] ?? 0;
+    if (!result || result.length === 0) return 0;
+    return result[0][`${calculation}_${field}`] ?? 0;
   }
 
   async getChartData(deptCode, config, options = {}) {
     const { fields, groupBy = "date" } = config;
-
-    const metrics = fields.map((f) => ({
-      field: f,
-      calculation: "sum",
-    }));
+    const metrics = fields.map((f) => ({ field: f, calculation: "sum" }));
 
     const result = await this.getAggregated(deptCode, {
       ...options,
@@ -375,4 +320,5 @@ class DepartmentDataService {
     return result?.data || [];
   }
 }
+
 module.exports = new DepartmentDataService();
