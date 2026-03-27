@@ -81,11 +81,20 @@ class DepartmentData {
         params.push(dateTo);
         paramIndex++;
       }
-      if (userId) {
+     /* if (userId) {
         query += ` AND user_id = $${paramIndex}`;
         params.push(userId);
         paramIndex++;
-      }
+      }*/
+        const validate = require("uuid-validate"); // or a simple regex
+
+        if (userId && validate(userId)) {
+          query += ` AND user_id = $${paramIndex}`;
+          params.push(userId);
+          paramIndex++;
+        } else if (userId) {
+          console.warn(`Ignoring invalid UUID: ${userId}`);
+        }
 
       // Count total before pagination
       const countQuery = query.replace("SELECT *", "SELECT COUNT(*) as total");
