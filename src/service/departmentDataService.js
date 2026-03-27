@@ -149,9 +149,6 @@ class DepartmentDataService {
 
       const dataWithUser = { ...data, user_id: userId };
       const newData = await DepartmentData.create(deptCode, dataWithUser);
-
-      // ✅ FIX : clearCache APRÈS la création — le prochain getAll
-      //         ira chercher les données fraîches en DB
       this.clearCache(deptCode);
 
       return newData;
