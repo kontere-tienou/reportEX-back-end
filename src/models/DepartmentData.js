@@ -86,18 +86,32 @@ class DepartmentData {
         params.push(userId);
         paramIndex++;
       }*/
-      // Use this Regex instead inside your findAll method:
+      // 1. Define helper checks
       const isValidUUID = (id) =>
         /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(
           id,
         );
 
-      if (userId && isValidUUID(userId)) {
-        query += ` AND user_id = $${paramIndex}`;
-        params.push(userId);
-        paramIndex++;
-      } else if (userId) {
-        console.warn(`Ignoring invalid UUID: ${userId}`);
+      const isValidInteger = (id) =>
+        !isNaN(parseInt(id)) && Number.isInteger(Number(id));
+
+      // 2. In your findAll logic:
+      if (userId) {
+        const isUuid = isValidUUID(userId);
+        const isInt = isValidInteger(userId);
+
+        if (isUuid || isInt) {
+          query += ` AND user_id = $${paramIndex}`;
+          params.push(userId);
+          paramIndex++;
+          console.log(
+            `Filtering by ${isUuid ? "UUID" : "Integer"} ID: ${userId}`,
+          );
+        } else {
+          console.warn(
+            `UserId "${userId}" matches neither UUID nor Integer. Skipping filter.`,
+          );
+        }
       }
 
       // Count total before pagination
