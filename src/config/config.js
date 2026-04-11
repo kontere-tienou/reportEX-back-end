@@ -47,6 +47,7 @@ module.exports = {
     ],
   },
 
+  
   // Email
   email: {
     host: process.env.SMTP_HOST,

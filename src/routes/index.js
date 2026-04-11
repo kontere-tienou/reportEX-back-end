@@ -14,6 +14,7 @@ const managementRoutes = require("./namagmentRoutes");
 const reportAccessRoutes = require("./reportAccessRequestRoutes");
 const reportRoutes = require("./reportRoutes");
 const departmentDataRoutes = require("./departmentDataRoutes");
+const departmentReportRoutes = require("./departmentReportsRoutes"); 
 const schemaRoutes = require("./schemaRoutes");
 
 
@@ -37,6 +38,7 @@ const configureRoutes = (app) => {
   app.use("/api/dashboard", dashboardRoutes);
   app.use("/api/management", managementRoutes);
   app.use("/api/report-access", reportAccessRoutes);
+  app.use("/api/:departmentCode/reports", departmentReportRoutes);
   app.use("/api/reports", reportRoutes);
   app.use("/api", departmentDataRoutes);
   app.use("/api/schemas", schemaRoutes);

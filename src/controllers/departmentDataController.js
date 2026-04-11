@@ -1,5 +1,5 @@
 // controllers/departmentDataController.js
-const departmentDataService = require("../service/departmentDataService"); 
+const departmentDataService = require("../service/departmentDataService");
 const {
   successResponse,
   errorResponse,
@@ -16,12 +16,83 @@ const db = require("../config/database");
  * ==========================================
  */
 
+// Helper pour obtenir l'ID utilisateur (UUID ou integer)
+const getUserId = (user) => {
+  if (!user) return null;
+
+  // Si l'utilisateur a un champ id (UUID)
+  if (user.id) return user.id;
+
+  // Si l'utilisateur a un champ userId
+  if (user.userId) return user.userId;
+
+  // Si l'utilisateur a un champ user_id
+  if (user.user_id) return user.user_id;
+
+  return null;
+};
+
+// Helper pour vérifier si l'utilisateur est admin
+const isAdmin = (user) => {
+  const role = user?.role?.toUpperCase();
+  return role === "DG" || role === "ADMIN";
+};
+
 const departmentDataController = {
   async getAll(req, res) {
     try {
       const { deptCode } = req.params;
+      const {
+        page,
+        limit,
+        dateFrom,
+        dateTo,
+        sortBy, // Optional - no sorting if not provided
+        sortOrder = "ASC", // Only used if sortBy is provided
+      } = req.query;
+
+      const userId = getUserId(req.user);
+      const userIsAdmin = isAdmin(req.user);
+      const filterUserId = !userIsAdmin ? userId : null;
+
+      const result = await departmentDataService.getAll(
+        deptCode,
+        {
+          page: page ? parseInt(page) : undefined,
+          limit: limit ? parseInt(limit) : undefined,
+          dateFrom,
+          dateTo,
+          sortBy: sortBy || undefined, // Pass undefined if no sortBy
+          sortOrder: sortBy ? sortOrder : undefined, // Only include if sorting
+        },
+        filterUserId,
+      );
+
+      return successResponse(
+        res,
+        {
+          data: result.data || [],
+          pagination: result.pagination,
+        },
+        "Données récupérées avec succès",
+      );
+    } catch (error) {
+      console.error("Get all data error DETAILED:", error);
+      return errorResponse(
+        res,
+        error.message || "Erreur lors de la récupération des données",
+        error.status || HTTP_STATUS.INTERNAL_ERROR,
+      );
+    }
+  },
+  /*async getAll(req, res) {
+    try {
+      const { deptCode } = req.params;
       const { page, limit, dateFrom, dateTo, sortBy, sortOrder } = req.query;
-      const userId = req.user?.role === "DG" ? null : req.userId;
+      const userId = getUserId(req.user);
+      const userIsAdmin = isAdmin(req.user);
+      const filterUserId = !userIsAdmin ? userId : null;
+
       const result = await departmentDataService.getAll(
         deptCode,
         {
@@ -32,34 +103,38 @@ const departmentDataController = {
           sortBy,
           sortOrder,
         },
-        userId,
+        filterUserId, // ⚠️ Ce paramètre est passé au service
       );
 
-      return paginatedResponse(
+      return successResponse(
         res,
-        result.data,
-        result.pagination,
+        {
+          data: result.data || [],
+          pagination: result.pagination,
+        },
         "Données récupérées avec succès",
       );
     } catch (error) {
       console.error("Get all data error DETAILED:", error);
-      console.error("Error stack:", error.stack);
       return errorResponse(
         res,
         error.message || "Erreur lors de la récupération des données",
         error.status || HTTP_STATUS.INTERNAL_ERROR,
       );
     }
-  },
+  },*/
   async getOne(req, res) {
     try {
       const { deptCode, id } = req.params;
+      const userId = getUserId(req.user);
+      const userIsAdmin = isAdmin(req.user);
 
-      if (!isUuid(id)) {
-        return errorResponse(res, "ID invalide", 400);
-      }
-      console.log("Invalid ID format:", typeof isUuid);
-      const data = await departmentDataService.getById(deptCode, id);
+      const data = await departmentDataService.getById(
+        deptCode,
+        id,
+        userId,
+        userIsAdmin,
+      );
 
       if (!data) {
         return notFoundResponse(res, "Donnée non trouvée");
@@ -233,7 +308,7 @@ const departmentDataController = {
       );
     }
   },
-  async getBatchData(req, res) {
+  /* async getBatchData(req, res) {
     const { deptCode } = req.params;
     const { metrics, dateFrom, dateTo, groupBy } = req.body;
     const userId = req.user.id;
@@ -334,10 +409,10 @@ const departmentDataController = {
         conditions.push(`user_id = $${paramIndex++}`);
         params.push(userId);
       }
-      /*if (!isAdmin) {
+      if (!isAdmin) {
         conditions.push(`user_id = $${paramIndex++}::uuid`);
         params.push(userId);
-      }*/
+      }
 
       const whereClause =
         conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
@@ -359,9 +434,6 @@ const departmentDataController = {
               ${groupByClause}
               ${!groupBy ? "LIMIT 1" : ""}
           `;
-
-      console.log("Batch query:", query);
-      console.log("Params:", params);
 
       const result = await db.query(query, params);
 
@@ -389,7 +461,162 @@ const departmentDataController = {
       );
     }
   },
+*/
+  async getBatchData(req, res) {
+    const { deptCode } = req.params;
+    const { metrics, dateFrom, dateTo, groupBy } = req.body;
+    const userId = req.user.id;
+    const isAdmin = ["DG", "ADMIN"].includes(req.user.role?.toUpperCase());
 
+    try {
+      // Validate input
+      if (!metrics || !Array.isArray(metrics) || metrics.length === 0) {
+        return errorResponse(
+          res,
+          "Metrics array is required",
+          HTTP_STATUS.BAD_REQUEST,
+        );
+      }
+
+      const tableName = `${deptCode.toLowerCase()}_data`;
+
+      // Check if table exists
+      const tableCheck = await db.query(
+        `SELECT EXISTS (
+                SELECT FROM information_schema.tables 
+                WHERE table_name = $1
+            )`,
+        [tableName],
+      );
+
+      if (!tableCheck.rows[0].exists) {
+        return errorResponse(
+          res,
+          `Table ${tableName} does not exist`,
+          HTTP_STATUS.NOT_FOUND,
+        );
+      }
+
+      // Build SELECT clause with all metrics
+      const metricSelects = metrics
+        .map((m) => {
+          // Sanitize field name
+          const field = m.field.replace(/[^a-zA-Z0-9_]/g, "");
+
+          switch (m.calculation) {
+            case "sum":
+              return `COALESCE(SUM(${field}), 0) as "${field}_sum"`;
+            case "avg":
+              return `COALESCE(AVG(${field}), 0) as "${field}_avg"`;
+            case "max":
+              return `COALESCE(MAX(${field}), 0) as "${field}_max"`;
+            case "min":
+              return `COALESCE(MIN(${field}), 0) as "${field}_min"`;
+            case "count":
+              return `COUNT(${field}) as "${field}_count"`;
+            default:
+              return `COALESCE(SUM(${field}), 0) as "${field}_sum"`;
+          }
+        })
+        .join(", ");
+
+      // Build WHERE clause
+      const conditions = [];
+      const params = [];
+      let paramIndex = 1;
+
+      if (dateFrom) {
+        conditions.push(`date >= $${paramIndex++}`);
+        params.push(dateFrom);
+      }
+
+      if (dateTo) {
+        conditions.push(`date <= $${paramIndex++}`);
+        params.push(dateTo);
+      }
+
+      // Add user filter if not admin - FLEXIBLE VALIDATION (Solution 4)
+      if (!isAdmin) {
+        // Validate user_id exists
+        if (!userId && userId !== 0) {
+          return errorResponse(
+            res,
+            "User ID is required",
+            HTTP_STATUS.BAD_REQUEST,
+          );
+        }
+
+        // Check if it's a valid UUID or numeric ID
+        const uuidRegex =
+          /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        const isNumericId = /^\d+$/.test(String(userId));
+        const isValidUuid = uuidRegex.test(String(userId));
+
+        // Debug logging (remove in production)
+        console.log(
+          `User ID validation - Value: ${userId}, Type: ${typeof userId}, Is UUID: ${isValidUuid}, Is Numeric: ${isNumericId}`,
+        );
+
+        if (!isValidUuid && !isNumericId) {
+          console.error("User ID is neither UUID nor numeric:", userId);
+          return errorResponse(
+            res,
+            "Invalid user ID format. Expected UUID or numeric ID.",
+            HTTP_STATUS.INTERNAL_ERROR,
+          );
+        }
+
+        conditions.push(`user_id = $${paramIndex++}`);
+        params.push(userId);
+      }
+
+      const whereClause =
+        conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+
+      // Add GROUP BY if needed
+      let groupByClause = "";
+      if (groupBy) {
+        const safeGroupBy = groupBy.replace(/[^a-zA-Z0-9_]/g, "");
+        groupByClause = `GROUP BY ${safeGroupBy}`;
+      }
+
+      // Execute query
+      const query = `
+            SELECT 
+                ${groupBy ? `${groupBy}, ` : ""}
+                ${metricSelects}
+            FROM ${tableName}
+            ${whereClause}
+            ${groupByClause}
+            ${!groupBy ? "LIMIT 1" : ""}
+        `;
+
+      const result = await db.query(query, params);
+
+      // Format response based on whether grouped or not
+      if (groupBy) {
+        const groupedResults = {};
+        result.rows.forEach((row) => {
+          const key = row[groupBy];
+          groupedResults[key] = row;
+        });
+        return successResponse(res, groupedResults, "Batch data retrieved");
+      } else {
+        return successResponse(
+          res,
+          result.rows[0] || {},
+          "Batch data retrieved",
+        );
+      }
+    } catch (error) {
+      console.error("Get batch data error:", error);
+      return errorResponse(
+        res,
+        "Error retrieving batch data: " + error.message,
+        HTTP_STATUS.INTERNAL_ERROR,
+      );
+    }
+  },
   async getBatchChartData(req, res) {
     const { deptCode } = req.params;
     const { metrics, dateFrom, dateTo, groupBy = "date" } = req.body;
@@ -456,8 +683,7 @@ const departmentDataController = {
       }
 
       if (!isAdmin) {
-     
-       const userQuery = await db.query(
+        const userQuery = await db.query(
           `SELECT id FROM users WHERE email = $1`,
           [req.user.email],
         );
@@ -500,9 +726,6 @@ const departmentDataController = {
         GROUP BY ${safeGroupBy}
         ORDER BY ${safeGroupBy} ASC
       `;
-
-      console.log("Batch chart query:", query);
-      console.log("Params:", params);
 
       const result = await db.query(query, params);
 

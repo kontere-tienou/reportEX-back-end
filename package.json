@@ -13,7 +13,9 @@
     "migrate": "node src/scripts/migrate.js",
     "init-db": "node src/config/initDatabase.js",
     "seed": "node scripts/seed.js",
-    "db:init": "node scripts/init-db.js"
+    "db:init": "node scripts/init-db.js",
+    "dev:watch": "nodemon --watch server.js --watch src --watch .env --ext js,json,env server.js",
+    "debug": "nodemon --inspect server.js"
   },
   "keywords": [
     "erp",
@@ -55,7 +57,7 @@
   "devDependencies": {
     "eslint": "^8.56.0",
     "jest": "^29.7.0",
-    "nodemon": "^3.0.2",
+    "nodemon": "^3.1.14",
     "supertest": "^6.3.3"
   },
   "engines": {

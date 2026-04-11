@@ -1,0 +1,13 @@
+{
+  "watch": ["server.js", "src/", ".env"],
+  "ext": "js,json,env",
+  "ignore": ["node_modules/", "uploads/", "logs/", "*.test.js", "*.spec.js"],
+  "delay": 1000,
+  "events": {
+    "restart": "echo '🔄 Serveur redémarré!'"
+  },
+  "env": {
+    "NODE_ENV": "development"
+  },
+  "exec": "node server.js"
+}

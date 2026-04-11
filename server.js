@@ -1,3 +1,4 @@
+// server.js
 const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
@@ -29,14 +30,13 @@ const colors = {
 
 /*
  ==========================================
-  BATEX ERP - CONFIGURATION DU SERVEUR
+  BATEX ERP - CONFIGURATION DU SERVEUR (MODE LOCAL)
 ==========================================
  */
 
-const isRailway = !!process.env.RAILWAY_SERVICE_ID;
-if (isRailway) {
-  process.env.PORT = process.env.PORT || "5008";
-}
+// Désactiver Railway - Forcer le mode local
+const isRailway = false; // Toujours false pour forcer le mode local
+process.env.PORT = process.env.PORT || "5008";
 
 const app = express();
 const server = http.createServer(app);
@@ -53,12 +53,8 @@ const io = new Server(server, {
 
 app.set("io", io);
 
-// Instead of just 'true', use a more specific setting
-app.set('trust proxy', 1); // Trust first proxy
-// OR
-app.set('trust proxy', 'loopback, linklocal, uniquelocal');
-// OR if you're behind a known proxy:
-app.set('trust proxy', ['loopback', '192.168.1.1']);
+// Configuration trust proxy simplifiée pour local
+app.set("trust proxy", false); // Pas de proxy en local
 
 // Middlewares
 app.use(
@@ -94,6 +90,27 @@ app.get("/api/reports/builder", async (req, res) => {
       error.message,
     );
     res.status(500).json({ message: "Error initializing report builder" });
+  }
+});
+
+// Route health check améliorée
+app.get("/health", async (req, res) => {
+  try {
+    const dbTest = await pool.query("SELECT 1 as connected");
+    res.json({
+      status: "healthy",
+      mode: "LOCAL",
+      database: "connected",
+      uptime: process.uptime(),
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    res.status(503).json({
+      status: "unhealthy",
+      mode: "LOCAL",
+      database: "disconnected",
+      error: error.message,
+    });
   }
 });
 
@@ -160,16 +177,45 @@ const checkDatabase = async () => {
     console.log(`${colors.green}✅ Base de données connectée${colors.reset}`);
     return true;
   } catch (error) {
-    logger.error("❌ Échec connexion DB:", error.message);
+    console.log(
+      `${colors.red}❌ Échec connexion DB:${colors.reset}`,
+      error.message,
+    );
+    console.log(
+      `${colors.yellow}⚠️  Assurez-vous que PostgreSQL est démarré:${colors.reset}`,
+    );
+    console.log(
+      `${colors.cyan}   - Linux: sudo systemctl start postgresql${colors.reset}`,
+    );
+    console.log(
+      `${colors.cyan}   - Mac: brew services start postgresql${colors.reset}`,
+    );
+    console.log(
+      `${colors.cyan}   - Windows: net start postgresql${colors.reset}`,
+    );
     return false;
   }
 };
 
 const startServer = async () => {
   try {
+    console.log(
+      `\n${colors.pink}╔══════════════════════════════════════════╗${colors.reset}`,
+    );
+    console.log(
+      `${colors.pink}║     🏠 MODE LOCAL - DÉMARRAGE           ║${colors.reset}`,
+    );
+    console.log(
+      `${colors.pink}╚══════════════════════════════════════════╝${colors.reset}\n`,
+    );
+
     const dbConnected = await checkDatabase();
     if (!dbConnected) {
       console.log(`${colors.red}❌ Arrêt - Pas de connexion DB${colors.reset}`);
+      console.log(
+        `${colors.yellow}💡 Solution: Créez la base de données avec:${colors.reset}`,
+      );
+      console.log(`${colors.cyan}   createdb batex_reporting${colors.reset}`);
       process.exit(1);
     }
 
@@ -178,11 +224,13 @@ const startServer = async () => {
       console.log(
         `\n${colors.pink}|═══════════════════════════════════════════${colors.reset}`,
       );
-      console.log(`${colors.green}|  🚀 SERVEUR DÉMARRÉ${colors.reset}`);
+      console.log(
+        `${colors.green}|  🚀 SERVEUR DÉMARRÉ (MODE LOCAL)${colors.reset}`,
+      );
       console.log(
         `${colors.pink}|═══════════════════════════════════════════${colors.reset}`,
       );
-      console.log(`${colors.cyan}|  📍 Environnement : ${config.server.env}`);
+      console.log(`${colors.cyan}|  📍 Environnement : LOCAL`);
       console.log(`${colors.magenta}|  🔌 Port : ${PORT}`);
       console.log(`${colors.yellow}|  🌐 API : http://localhost:${PORT}`);
       console.log(

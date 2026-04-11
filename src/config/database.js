@@ -1,3 +1,4 @@
+// src/config/database.js
 const { Pool } = require("pg");
 const dotenv = require("dotenv");
 const fs = require("fs");
@@ -20,38 +21,24 @@ if (fs.existsSync(envLocalPath)) {
   dotenv.config({ path: envLocalPath });
 }
 
-// Détection Railway
-const isRailway = !!process.env.RAILWAY_ENVIRONMENT;
+// Configuration UNIQUEMENT locale
+const dbConfig = {
+  user: process.env.DB_USER || "postgres",
+  password: process.env.DB_PASSWORD || "",
+  host: process.env.DB_HOST || "localhost",
+  port: parseInt(process.env.DB_PORT || "5432", 10),
+  database: process.env.DB_NAME || "batex_reporting",
+  ssl: false, // Pas de SSL en local
+  max: 10,
+  connectionTimeoutMillis: 10000,
+};
 
-// Configuration DB
-let dbConfig;
-
-if (process.env.DATABASE_URL) {
-  // Mode Railway/production
-  const isInternal = process.env.DATABASE_URL.includes(".railway.internal");
-  dbConfig = {
-    connectionString: process.env.DATABASE_URL,
-    ssl: isInternal ? false : { rejectUnauthorized: false },
-    max: 10,
-    connectionTimeoutMillis: 10000,
-  };
-  console.log(
-    `${colors.cyan}📡 Connexion Railway ${isInternal ? "(interne)" : "(externe)"}${colors.reset}`,
-  );
-} else {
-  // Mode local
-  dbConfig = {
-    user: process.env.DB_USER || "postgres",
-    password: process.env.DB_PASSWORD || "",
-    host: process.env.DB_HOST || "localhost",
-    port: parseInt(process.env.DB_PORT || "5432", 10),
-    database: process.env.DB_NAME || "postgres",
-    ssl: false,
-    max: 10,
-    connectionTimeoutMillis: 10000,
-  };
-  console.log(`${colors.cyan}💻 Connexion locale${colors.reset}`);
-}
+console.log(
+  `${colors.cyan}💻 Mode LOCAL - Connexion à PostgreSQL${colors.reset}`,
+);
+console.log(
+  `${colors.cyan}📊 Base: ${dbConfig.database} sur ${dbConfig.host}:${dbConfig.port}${colors.reset}`,
+);
 
 // Création du pool
 const pool = new Pool(dbConfig);
@@ -62,8 +49,16 @@ const pool = new Pool(dbConfig);
   try {
     client = await pool.connect();
     await client.query("SELECT NOW()");
+    console.log(
+      `${colors.green}✅ Connexion à la base de données établie${colors.reset}`,
+    );
   } catch (err) {
-    console.log(`${colors.red}❌ Erreur DB : ${err.message}${colors.reset}`);
+    console.log(
+      `${colors.red}❌ Erreur de connexion DB : ${err.message}${colors.reset}`,
+    );
+    console.log(
+      `${colors.yellow}⚠️  Vérifiez que PostgreSQL est démarré et que les identifiants sont corrects${colors.reset}`,
+    );
     logger.error("❌ Erreur DB", { message: err.message });
   } finally {
     if (client) client.release();
