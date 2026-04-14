@@ -6,7 +6,6 @@ const path = require("path");
 
 const logger = require("../utils/logger");
 
-// Couleurs pour les logs essentiels
 const colors = {
   reset: "\x1b[0m",
   green: "\x1b[32m",
@@ -21,24 +20,46 @@ if (fs.existsSync(envLocalPath)) {
   dotenv.config({ path: envLocalPath });
 }
 
-// Configuration UNIQUEMENT locale
-const dbConfig = {
-  user: process.env.DB_USER || "postgres",
-  password: process.env.DB_PASSWORD || "",
-  host: process.env.DB_HOST || "localhost",
-  port: parseInt(process.env.DB_PORT || "5432", 10),
-  database: process.env.DB_NAME || "batex_reporting",
-  ssl: false, // Pas de SSL en local
-  max: 10,
-  connectionTimeoutMillis: 10000,
-};
+/* ==========================================
+  CONFIGURATION DYNAMIQUE (LOCAL / RAILWAY)
+  ==========================================
+*/
+
+const isRailway = process.env.RAILWAY_ENVIRONMENT || process.env.DATABASE_URL;
+
+const dbConfig = isRailway
+  ? {
+      // Version Production (Railway)
+      connectionString: process.env.DATABASE_URL,
+      ssl: {
+        rejectUnauthorized: false,
+      },
+    }
+  : {
+      // Version Développement (Local)
+      user: process.env.DB_USER || "postgres",
+      password: process.env.DB_PASSWORD || "",
+      host: process.env.DB_HOST || "localhost",
+      port: parseInt(process.env.DB_PORT || "5432", 10),
+      database: process.env.DB_NAME || "batex_reporting",
+      ssl: false,
+    };
+
+// Options communes
+dbConfig.max = 10;
+dbConfig.connectionTimeoutMillis = 10000;
 
 console.log(
-  `${colors.cyan}💻 Mode LOCAL - Connexion à PostgreSQL${colors.reset}`,
+  isRailway
+    ? `${colors.green}🚀 Mode PRODUCTION - Connexion via DATABASE_URL${colors.reset}`
+    : `${colors.cyan}💻 Mode LOCAL - Connexion à PostgreSQL${colors.reset}`,
 );
-console.log(
-  `${colors.cyan}📊 Base: ${dbConfig.database} sur ${dbConfig.host}:${dbConfig.port}${colors.reset}`,
-);
+
+if (!isRailway) {
+  console.log(
+    `${colors.cyan}📊 Base: ${dbConfig.database} sur ${dbConfig.host}:${dbConfig.port}${colors.reset}`,
+  );
+}
 
 // Création du pool
 const pool = new Pool(dbConfig);
@@ -56,9 +77,15 @@ const pool = new Pool(dbConfig);
     console.log(
       `${colors.red}❌ Erreur de connexion DB : ${err.message}${colors.reset}`,
     );
-    console.log(
-      `${colors.yellow}⚠️  Vérifiez que PostgreSQL est démarré et que les identifiants sont corrects${colors.reset}`,
-    );
+    if (!isRailway) {
+      console.log(
+        `${colors.yellow}⚠️  Vérifiez que PostgreSQL est démarré localement.${colors.reset}`,
+      );
+    } else {
+      console.log(
+        `${colors.red}❗ Vérifiez la variable DATABASE_URL sur Railway.${colors.reset}`,
+      );
+    }
     logger.error("❌ Erreur DB", { message: err.message });
   } finally {
     if (client) client.release();
