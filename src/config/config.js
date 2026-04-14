@@ -28,9 +28,7 @@ module.exports = {
   // CORS
   cors: {
     origin: process.env.ALLOWED_ORIGINS?.split(",") || [
-      "http://localhost:5173",
-      "https://report-ex.vercel.app",
-      "https://reportex-back-end-production.up.railway.app",
+      "https://report-ex.vercel.app"
     ],
     credentials: true,
   },
