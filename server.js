@@ -68,6 +68,26 @@ configureRoutes(app);
 app.use(notFound);
 app.use(errorHandler);
 
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  console.log("Request origin:", origin);
+  console.log("Allowed origins:", config.cors.origin);
+
+  if (config.cors.origin.includes(origin)) {
+    res.header("Access-Control-Allow-Origin", origin);
+  }
+  res.header("Access-Control-Allow-Credentials", "true");
+  res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+  res.header(
+    "Access-Control-Allow-Headers",
+    "Origin, X-Requested-With, Content-Type, Accept, Authorization",
+  );
+
+  if (req.method === "OPTIONS") {
+    return res.sendStatus(200);
+  }
+  next();
+});
 /* ==========================================
    DÉMARRAGE SYNCHRONISÉ
    ========================================== */

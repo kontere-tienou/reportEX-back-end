@@ -27,8 +27,11 @@ module.exports = {
 
   // CORS
   cors: {
-    origin: process.env.ALLOWED_ORIGINS?.split(",") || [
-      "https://report-ex.vercel.app"
+    origin: [
+      "https://report-ex.vercel.app",
+      "https://reportex-back-end.up.railway.app",
+      "http://localhost:3000", // pour le dev local
+      "http://localhost:5173", // pour Vite
     ],
     credentials: true,
   },
