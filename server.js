@@ -27,9 +27,6 @@ const colors = {
   pink: "\x1b[35m",
 };
 
-/* ==========================================
-   DÉTECTION UNIQUE (RAILWAY VS LOCAL)
-   ========================================== */
 const isRailway = process.env.RAILWAY_ENVIRONMENT || process.env.DATABASE_URL;
 const PORT = process.env.PORT || config.server.port || 5008;
 
@@ -42,9 +39,29 @@ const io = new Server(server, {
 app.set("io", io);
 app.set("trust proxy", isRailway ? 1 : false);
 
-// Middlewares de base
+/* ==========================================
+   CORS — must be before all routes
+   ========================================== */
+const corsOptions = {
+  origin: config.cors.origin,
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: [
+    "Origin",
+    "X-Requested-With",
+    "Content-Type",
+    "Accept",
+    "Authorization",
+  ],
+};
+
+app.use(cors(corsOptions));
+app.options("*", cors(corsOptions)); // ← handles all preflight requests
+
+/* ==========================================
+   Core middlewares
+   ========================================== */
 app.use(helmet({ contentSecurityPolicy: false }));
-app.use(cors({ origin: config.cors.origin, credentials: true }));
 app.use(compression());
 app.use(express.json({ limit: "10mb" }));
 app.use(cookieParser());
@@ -54,7 +71,9 @@ app.use("/uploads", express.static("uploads"));
 
 if (config.server.env !== "test") app.use(requestLogger);
 
-// Routes
+/* ==========================================
+   Routes
+   ========================================== */
 app.get("/health", async (req, res) => {
   try {
     await pool.query("SELECT 1");
@@ -68,28 +87,8 @@ configureRoutes(app);
 app.use(notFound);
 app.use(errorHandler);
 
-app.use((req, res, next) => {
-  const origin = req.headers.origin;
-  console.log("Request origin:", origin);
-  console.log("Allowed origins:", config.cors.origin);
-
-  if (config.cors.origin.includes(origin)) {
-    res.header("Access-Control-Allow-Origin", origin);
-  }
-  res.header("Access-Control-Allow-Credentials", "true");
-  res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-  res.header(
-    "Access-Control-Allow-Headers",
-    "Origin, X-Requested-With, Content-Type, Accept, Authorization",
-  );
-
-  if (req.method === "OPTIONS") {
-    return res.sendStatus(200);
-  }
-  next();
-});
 /* ==========================================
-   DÉMARRAGE SYNCHRONISÉ
+   Server startup
    ========================================== */
 const startServer = async () => {
   const modeLabel = isRailway ? "PRODUCTION / RAILWAY" : "LOCAL";
@@ -114,7 +113,6 @@ const startServer = async () => {
     );
     console.log(`${colors.cyan}| 📍 Environnement : ${modeLabel}`);
     console.log(`${colors.magenta}| 🔌 Port : ${PORT}`);
-
     if (isRailway) {
       console.log(
         `${colors.blue}| 🌍 URL Cloud : ${process.env.RAILWAY_STATIC_URL || "Active"}`,
