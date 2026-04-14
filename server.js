@@ -33,35 +33,79 @@ const PORT = process.env.PORT || config.server.port || 5008;
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
-  cors: { origin: config.cors.origin, credentials: true },
+  cors: {
+    origin: config.cors.origin,
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  },
 });
 
 app.set("io", io);
 app.set("trust proxy", isRailway ? 1 : false);
 
 /* ==========================================
-   CORS — must be before all routes
+   CORS — ABSOLUTE FIRST, before everything
    ========================================== */
-const corsOptions = {
-  origin: config.cors.origin,
-  credentials: true,
-  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-  allowedHeaders: [
-    "Origin",
-    "X-Requested-With",
-    "Content-Type",
-    "Accept",
-    "Authorization",
-  ],
-};
+const ALLOWED_ORIGINS = [
+  "https://report-ex.vercel.app",
+  "https://reportex-back-end.up.railway.app",
+  "http://localhost:3000",
+  "http://localhost:5173",
+];
 
-app.use(cors(corsOptions));
-app.options("*", cors(corsOptions)); // ← handles all preflight requests
+// Raw CORS headers — bypasses any middleware ordering issue
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+
+  if (ALLOWED_ORIGINS.includes(origin)) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+  }
+  res.setHeader("Access-Control-Allow-Credentials", "true");
+  res.setHeader(
+    "Access-Control-Allow-Methods",
+    "GET,POST,PUT,DELETE,PATCH,OPTIONS",
+  );
+  res.setHeader(
+    "Access-Control-Allow-Headers",
+    "Origin,X-Requested-With,Content-Type,Accept,Authorization",
+  );
+
+  // Respond immediately to preflight
+  if (req.method === "OPTIONS") {
+    return res.sendStatus(200);
+  }
+  next();
+});
+
+// cors() package as secondary layer (belt + suspenders)
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      if (!origin || ALLOWED_ORIGINS.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error("Not allowed by CORS"));
+      }
+    },
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+    allowedHeaders: [
+      "Origin",
+      "X-Requested-With",
+      "Content-Type",
+      "Accept",
+      "Authorization",
+    ],
+  }),
+);
+app.options("*", (req, res) => res.sendStatus(200));
 
 /* ==========================================
    Core middlewares
    ========================================== */
-app.use(helmet({ contentSecurityPolicy: false }));
+app.use(
+  helmet({ contentSecurityPolicy: false, crossOriginResourcePolicy: false }),
+);
 app.use(compression());
 app.use(express.json({ limit: "10mb" }));
 app.use(cookieParser());
@@ -72,12 +116,26 @@ app.use("/uploads", express.static("uploads"));
 if (config.server.env !== "test") app.use(requestLogger);
 
 /* ==========================================
+   Debug log (remove after confirming CORS works)
+   ========================================== */
+app.use((req, res, next) => {
+  console.log(
+    `[${req.method}] ${req.path} — origin: ${req.headers.origin || "none"}`,
+  );
+  next();
+});
+
+/* ==========================================
    Routes
    ========================================== */
 app.get("/health", async (req, res) => {
   try {
     await pool.query("SELECT 1");
-    res.json({ status: "healthy", mode: isRailway ? "RAILWAY" : "LOCAL" });
+    res.json({
+      status: "healthy",
+      mode: isRailway ? "RAILWAY" : "LOCAL",
+      cors_origins: ALLOWED_ORIGINS,
+    });
   } catch (e) {
     res.status(503).json({ status: "unhealthy" });
   }
@@ -113,6 +171,10 @@ const startServer = async () => {
     );
     console.log(`${colors.cyan}| 📍 Environnement : ${modeLabel}`);
     console.log(`${colors.magenta}| 🔌 Port : ${PORT}`);
+    console.log(
+      `${colors.yellow}| 🔒 CORS origins : ${ALLOWED_ORIGINS.join(", ")}`,
+    );
+
     if (isRailway) {
       console.log(
         `${colors.blue}| 🌍 URL Cloud : ${process.env.RAILWAY_STATIC_URL || "Active"}`,
