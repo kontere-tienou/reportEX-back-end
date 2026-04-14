@@ -45,6 +45,7 @@ const dbConfig = isRailway
       ssl: false,
     };
 
+
 // Options communes
 dbConfig.max = 10;
 dbConfig.connectionTimeoutMillis = 10000;
@@ -66,29 +67,19 @@ const pool = new Pool(dbConfig);
 
 // Test de connexion immédiat
 (async () => {
-  let client;
   try {
-    client = await pool.connect();
-    await client.query("SELECT NOW()");
-    console.log(
-      `${colors.green}✅ Connexion à la base de données établie${colors.reset}`,
-    );
-  } catch (err) {
-    console.log(
-      `${colors.red}❌ Erreur de connexion DB : ${err.message}${colors.reset}`,
-    );
-    if (!isRailway) {
+    await pool.query("SELECT NOW()");
+    if (isRailway) {
       console.log(
-        `${colors.yellow}⚠️  Vérifiez que PostgreSQL est démarré localement.${colors.reset}`,
+        `${colors.green}✅ CLOUD DB : Connecté à Railway (Postgres)${colors.reset}`,
       );
     } else {
       console.log(
-        `${colors.red}❗ Vérifiez la variable DATABASE_URL sur Railway.${colors.reset}`,
+        `${colors.cyan}💻 LOCAL DB : Connecté à ${dbConfig.database} (localhost)${colors.reset}`,
       );
     }
-    logger.error("❌ Erreur DB", { message: err.message });
-  } finally {
-    if (client) client.release();
+  } catch (err) {
+    console.log(`${colors.red}❌ ERREUR DB : ${err.message}${colors.reset}`);
   }
 })();
 
@@ -106,3 +97,56 @@ module.exports = {
     console.log(`${colors.yellow}🔄 Pool DB fermé${colors.reset}`);
   },
 };
+/*
+
+// src/config/database.js
+const { Pool } = require("pg");
+require("dotenv").config();
+
+const colors = {
+  reset: "\x1b[0m",
+  green: "\x1b[32m",
+  yellow: "\x1b[33m",
+  red: "\x1b[31m",
+  cyan: "\x1b[36m",
+};
+
+const isRailway = process.env.RAILWAY_ENVIRONMENT || process.env.DATABASE_URL;
+
+const dbConfig = isRailway 
+  ? {
+      connectionString: process.env.DATABASE_URL,
+      ssl: { rejectUnauthorized: false }, // Obligatoire pour Railway
+    }
+  : {
+      user: process.env.DB_USER || "postgres",
+      password: process.env.DB_PASSWORD || "",
+      host: process.env.DB_HOST || "localhost",
+      port: parseInt(process.env.DB_PORT || "5432", 10),
+      database: process.env.DB_NAME || "batex_reporting",
+      ssl: false,
+    };
+
+const pool = new Pool(dbConfig);
+
+// Test de connexion avec logs adaptés
+(async () => {
+  try {
+    await pool.query("SELECT NOW()");
+    if (isRailway) {
+      console.log(`${colors.green}✅ CLOUD DB : Connecté à Railway (Postgres)${colors.reset}`);
+    } else {
+      console.log(`${colors.cyan}💻 LOCAL DB : Connecté à ${dbConfig.database} (localhost)${colors.reset}`);
+    }
+  } catch (err) {
+    console.log(`${colors.red}❌ ERREUR DB : ${err.message}${colors.reset}`);
+  }
+})();
+
+module.exports = {
+  query: (text, params) => pool.query(text, params),
+  pool,
+  closePool: () => pool.end(),
+};
+
+*/

@@ -27,68 +27,40 @@ const colors = {
   pink: "\x1b[35m",
 };
 
-/*
- ==========================================
-  BATEX ERP - CONFIGURATION DYNAMIQUE
- ==========================================
-*/
-
-// SYNCHRONISATION : On utilise la même logique que dans database.js
+/* ==========================================
+   DÉTECTION UNIQUE (RAILWAY VS LOCAL)
+   ========================================== */
 const isRailway = process.env.RAILWAY_ENVIRONMENT || process.env.DATABASE_URL;
 const PORT = process.env.PORT || config.server.port || 5008;
 
 const app = express();
 const server = http.createServer(app);
-
 const io = new Server(server, {
-  cors: {
-    origin: config.cors.origin,
-    methods: ["GET", "POST", "PUT", "DELETE"],
-    credentials: true,
-  },
-  pingTimeout: 60000,
-  pingInterval: 25000,
+  cors: { origin: config.cors.origin, credentials: true },
 });
 
 app.set("io", io);
 app.set("trust proxy", isRailway ? 1 : false);
 
-app.use(
-  helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false }),
-);
-app.use(
-  cors({
-    origin: config.cors.origin,
-    credentials: config.cors.credentials,
-    methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],
-    allowedHeaders: ["Content-Type", "Authorization"],
-  }),
-);
-
+// Middlewares de base
+app.use(helmet({ contentSecurityPolicy: false }));
+app.use(cors({ origin: config.cors.origin, credentials: true }));
 app.use(compression());
 app.use(express.json({ limit: "10mb" }));
-app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 app.use(cookieParser());
 app.use(requestId);
 app.use(generalLimiter);
 app.use("/uploads", express.static("uploads"));
 
-if (config.server.env !== "test") {
-  app.use(requestLogger);
-}
+if (config.server.env !== "test") app.use(requestLogger);
 
-// Routes Health
+// Routes
 app.get("/health", async (req, res) => {
   try {
     await pool.query("SELECT 1");
-    res.json({
-      status: "healthy",
-      mode: isRailway ? "PRODUCTION" : "LOCAL",
-      database: "connected",
-      uptime: process.uptime(),
-    });
-  } catch (error) {
-    res.status(503).json({ status: "unhealthy", error: error.message });
+    res.json({ status: "healthy", mode: isRailway ? "RAILWAY" : "LOCAL" });
+  } catch (e) {
+    res.status(503).json({ status: "unhealthy" });
   }
 });
 
@@ -96,93 +68,46 @@ configureRoutes(app);
 app.use(notFound);
 app.use(errorHandler);
 
-// --- Socket.IO ---
-const connectedUsers = new Map();
-io.on("connection", (socket) => {
-  socket.on("authenticate", (userId) => {
-    if (!userId) return;
-    connectedUsers.set(userId, socket.id);
-    socket.join(`user:${userId}`);
-  });
-  socket.on("disconnect", () => {
-    for (const [userId, socketId] of connectedUsers.entries()) {
-      if (socketId === socket.id) {
-        connectedUsers.delete(userId);
-        break;
-      }
-    }
-  });
-});
-
-/**
- * ==========================================
- * DÉMARRAGE DU SERVEUR
- * ==========================================
- */
-
+/* ==========================================
+   DÉMARRAGE SYNCHRONISÉ
+   ========================================== */
 const startServer = async () => {
-  try {
-    const modeLabel = isRailway ? "PRODUCTION / RAILWAY" : "LOCAL";
+  const modeLabel = isRailway ? "PRODUCTION / RAILWAY" : "LOCAL";
 
-    // 1. Affichage de l'entête
+  console.log(
+    `\n${colors.pink}╔══════════════════════════════════════════╗${colors.reset}`,
+  );
+  console.log(
+    `${colors.pink}║    🏠 MODE ${modeLabel.padEnd(19)} ║${colors.reset}`,
+  );
+  console.log(
+    `${colors.pink}╚══════════════════════════════════════════╝${colors.reset}\n`,
+  );
+
+  server.listen(PORT, () => {
     console.log(
-      `\n${colors.pink}╔══════════════════════════════════════════╗${colors.reset}`,
+      `${colors.pink}|═══════════════════════════════════════════${colors.reset}`,
     );
+    console.log(`${colors.green}| 🚀 SERVEUR BATEX DÉMARRÉ${colors.reset}`);
     console.log(
-      `${colors.pink}║    🚀 MODE ${modeLabel.padEnd(19)} ║${colors.reset}`,
+      `${colors.pink}|═══════════════════════════════════════════${colors.reset}`,
     );
+    console.log(`${colors.cyan}| 📍 Environnement : ${modeLabel}`);
+    console.log(`${colors.magenta}| 🔌 Port : ${PORT}`);
+
+    if (isRailway) {
+      console.log(
+        `${colors.blue}| 🌍 URL Cloud : ${process.env.RAILWAY_STATIC_URL || "Active"}`,
+      );
+    } else {
+      console.log(`${colors.yellow}| 🌐 API Locale : http://localhost:${PORT}`);
+    }
     console.log(
-      `${colors.pink}╚══════════════════════════════════════════╝${colors.reset}\n`,
+      `${colors.pink}|═══════════════════════════════════════════${colors.reset}\n`,
     );
-
-    // 2. Lancement du serveur
-    server.listen(PORT, () => {
-      console.log(
-        `${colors.pink}|═══════════════════════════════════════════${colors.reset}`,
-      );
-      console.log(
-        `${colors.green}| ✅ SERVEUR BATEX OPÉRATIONNEL${colors.reset}`,
-      );
-      console.log(
-        `${colors.pink}|═══════════════════════════════════════════${colors.reset}`,
-      );
-      console.log(
-        `${colors.cyan}| 📍 Environnement : ${isRailway ? "CLOUD (Railway)" : "DEVELOPPEMENT (Local)"}`,
-      );
-      console.log(`${colors.magenta}| 🔌 Port : ${PORT}`);
-
-      if (!isRailway) {
-        console.log(`${colors.yellow}| 🌐 API : http://localhost:${PORT}`);
-      } else {
-        console.log(
-          `${colors.blue}| 🌍 URL : ${process.env.RAILWAY_STATIC_URL || "Railway Cloud"}`,
-        );
-      }
-
-      console.log(`${colors.green}| 💓 Health Check : Activé`);
-      console.log(
-        `${colors.pink}|═══════════════════════════════════════════${colors.reset}\n`,
-      );
-    });
-  } catch (error) {
-    logger.error("❌ Échec critique:", error.message);
-    process.exit(1);
-  }
-};
-
-const gracefulShutdown = async (signal) => {
-  console.log(`\n${colors.yellow}🔄 Arrêt (${signal})...${colors.reset}`);
-  server.close(async () => {
-    await closePool();
-    process.exit(0);
   });
 };
 
-process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
-process.on("SIGINT", () => gracefulShutdown("SIGINT"));
-
-if (require.main === module) {
-  startServer();
-}
+if (require.main === module) startServer();
 
 module.exports = { app, server, io };
