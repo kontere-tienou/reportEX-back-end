@@ -30,17 +30,19 @@ const colors = {
 
 /*
  ==========================================
-  BATEX ERP - CONFIGURATION DU SERVEUR (MODE LOCAL)
-==========================================
- */
+  BATEX ERP - CONFIGURATION DYNAMIQUE
+ ==========================================
+*/
 
-// Désactiver Railway - Forcer le mode local
-const isRailway = true; // Toujours false pour forcer le mode local
-process.env.PORT = process.env.PORT || "5008";
+// Détection automatique : Railway définit souvent RAILWAY_ENVIRONMENT ou NODE_ENV=production
+const isRailway =
+  process.env.RAILWAY_ENVIRONMENT || process.env.NODE_ENV === "production";
+const PORT = process.env.PORT || config.server.port || 5008;
 
 const app = express();
 const server = http.createServer(app);
 
+// Configuration Socket.IO
 const io = new Server(server, {
   cors: {
     origin: config.cors.origin,
@@ -53,13 +55,17 @@ const io = new Server(server, {
 
 app.set("io", io);
 
-// Configuration trust proxy simplifiée pour local
-app.set("trust proxy", false); // Pas de proxy en local
+// Important pour Railway : Faire confiance au proxy pour récupérer l'IP réelle
+app.set("trust proxy", isRailway ? 1 : false);
 
 // Middlewares
 app.use(
-  helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false }),
+  helmet({
+    contentSecurityPolicy: false, // Requis pour certains outils de reporting/dashboards
+    crossOriginEmbedderPolicy: false,
+  }),
 );
+
 app.use(
   cors({
     origin: config.cors.origin,
@@ -68,6 +74,7 @@ app.use(
     allowedHeaders: ["Content-Type", "Authorization"],
   }),
 );
+
 app.use(compression());
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
@@ -80,26 +87,24 @@ if (config.server.env !== "test") {
   app.use(requestLogger);
 }
 
-// Routes
+// --- Routes Spécifiques ---
+
 app.get("/api/reports/builder", async (req, res) => {
   try {
     res.status(200).json({ message: "Report Builder Initialized" });
   } catch (error) {
-    console.error(
-      `${colors.red}❌ Erreur report builder:${colors.reset}`,
-      error.message,
-    );
+    logger.error("❌ Erreur report builder", { error: error.message });
     res.status(500).json({ message: "Error initializing report builder" });
   }
 });
 
-// Route health check améliorée
+// Route health check (Crucial pour Railway)
 app.get("/health", async (req, res) => {
   try {
     const dbTest = await pool.query("SELECT 1 as connected");
     res.json({
       status: "healthy",
-      mode: "LOCAL",
+      mode: isRailway ? "PRODUCTION/RAILWAY" : "LOCAL",
       database: "connected",
       uptime: process.uptime(),
       timestamp: new Date().toISOString(),
@@ -107,18 +112,21 @@ app.get("/health", async (req, res) => {
   } catch (error) {
     res.status(503).json({
       status: "unhealthy",
-      mode: "LOCAL",
+      mode: isRailway ? "PRODUCTION/RAILWAY" : "LOCAL",
       database: "disconnected",
       error: error.message,
     });
   }
 });
 
+// Chargement des autres routes
 configureRoutes(app);
+
+// Gestion des erreurs
 app.use(notFound);
 app.use(errorHandler);
 
-// Socket.IO
+// --- Socket.IO Logic ---
 const connectedUsers = new Map();
 
 io.on("connection", (socket) => {
@@ -137,11 +145,6 @@ io.on("connection", (socket) => {
     socket.join(`department:${departmentId}`);
   });
 
-  socket.on("leave:department", (departmentId) => {
-    if (!departmentId) return;
-    socket.leave(`department:${departmentId}`);
-  });
-
   socket.on("notification:send", (data) => {
     const { userId, notification } = data;
     if (!userId || !notification) return;
@@ -153,137 +156,93 @@ io.on("connection", (socket) => {
       if (socketId === socket.id) {
         connectedUsers.delete(userId);
         io.emit("user:offline", { userId });
-        logger.info("👤 Utilisateur déconnecté", { userId });
         break;
       }
     }
     logger.info("📱 Client Socket.IO déconnecté", { socketId: socket.id });
   });
-
-  socket.on("error", (error) => {
-    logger.error("❌ Erreur Socket.IO", { error: error.message });
-  });
 });
 
 /**
  * ==========================================
- * VÉRIFICATION DB & DÉMARRAGE
+ * DÉMARRAGE DU SERVEUR
  * ==========================================
  */
 
-const checkDatabase = async () => {
-  try {
-    await pool.query("SELECT NOW()");
-    console.log(`${colors.green}✅ Base de données connectée${colors.reset}`);
-    return true;
-  } catch (error) {
-    console.log(
-      `${colors.red}❌ Échec connexion DB:${colors.reset}`,
-      error.message,
-    );
-    console.log(
-      `${colors.yellow}⚠️  Assurez-vous que PostgreSQL est démarré:${colors.reset}`,
-    );
-    console.log(
-      `${colors.cyan}   - Linux: sudo systemctl start postgresql${colors.reset}`,
-    );
-    console.log(
-      `${colors.cyan}   - Mac: brew services start postgresql${colors.reset}`,
-    );
-    console.log(
-      `${colors.cyan}   - Windows: net start postgresql${colors.reset}`,
-    );
-    return false;
-  }
-};
-
 const startServer = async () => {
   try {
+    // Entête de démarrage
+    const modeLabel = isRailway ? "PRODUCTION / RAILWAY" : "LOCAL";
     console.log(
       `\n${colors.pink}╔══════════════════════════════════════════╗${colors.reset}`,
     );
     console.log(
-      `${colors.pink}║     🏠 MODE LOCAL - DÉMARRAGE           ║${colors.reset}`,
+      `${colors.pink}║    🏠 MODE ${modeLabel.padEnd(19)} ║${colors.reset}`,
     );
     console.log(
       `${colors.pink}╚══════════════════════════════════════════╝${colors.reset}\n`,
     );
 
-    const dbConnected = await checkDatabase();
-    if (!dbConnected) {
-      console.log(`${colors.red}❌ Arrêt - Pas de connexion DB${colors.reset}`);
+    // Vérification DB
+    try {
+      await pool.query("SELECT NOW()");
+      console.log(`${colors.green}✅ Base de données connectée${colors.reset}`);
+    } catch (dbError) {
       console.log(
-        `${colors.yellow}💡 Solution: Créez la base de données avec:${colors.reset}`,
+        `${colors.red}❌ Échec connexion DB:${colors.reset} ${dbError.message}`,
       );
-      console.log(`${colors.cyan}   createdb batex_reporting${colors.reset}`);
+      if (!isRailway) {
+        console.log(
+          `${colors.yellow}⚠️  Vérifiez que PostgreSQL est lancé localement.${colors.reset}`,
+        );
+      }
       process.exit(1);
     }
 
-    const PORT = config.server.port;
     server.listen(PORT, () => {
-      console.log(
-        `\n${colors.pink}|═══════════════════════════════════════════${colors.reset}`,
-      );
-      console.log(
-        `${colors.green}|  🚀 SERVEUR DÉMARRÉ (MODE LOCAL)${colors.reset}`,
-      );
       console.log(
         `${colors.pink}|═══════════════════════════════════════════${colors.reset}`,
       );
-      console.log(`${colors.cyan}|  📍 Environnement : LOCAL`);
-      console.log(`${colors.magenta}|  🔌 Port : ${PORT}`);
-      console.log(`${colors.yellow}|  🌐 API : http://localhost:${PORT}`);
+      console.log(`${colors.green}| 🚀 SERVEUR BATEX DÉMARRÉ${colors.reset}`);
       console.log(
-        `${colors.green}|  💓 Health : http://localhost:${PORT}/health`,
+        `${colors.pink}|═══════════════════════════════════════════${colors.reset}`,
       );
-      console.log(`${colors.blue}|  📡 Socket.IO : Activé`);
+      console.log(`${colors.cyan}| 📍 Environnement : ${modeLabel}`);
+      console.log(`${colors.magenta}| 🔌 Port : ${PORT}`);
+      if (!isRailway) {
+        console.log(`${colors.yellow}| 🌐 API : http://localhost:${PORT}`);
+        console.log(
+          `${colors.green}| 💓 Health : http://localhost:${PORT}/health`,
+        );
+      }
+      console.log(`${colors.blue}| 📡 Socket.IO : Activé`);
       console.log(
         `${colors.pink}|═══════════════════════════════════════════${colors.reset}\n`,
       );
     });
   } catch (error) {
-    logger.error("❌ Échec démarrage:", error.message);
+    logger.error("❌ Échec critique au démarrage:", error.message);
     process.exit(1);
   }
 };
 
-// Arrêt gracieux
+// Arrêt gracieux (Graceful Shutdown)
 const gracefulShutdown = async (signal) => {
   console.log(
     `\n${colors.yellow}🔄 Arrêt du serveur (${signal})...${colors.reset}`,
   );
-  logger.info(`Arrêt demandé via ${signal}`);
-
   server.close(async () => {
     await closePool();
     io.close();
-    console.log(`${colors.green}✅ Serveur arrêté${colors.reset}`);
+    console.log(
+      `${colors.green}✅ Ressources libérées et serveur arrêté${colors.reset}`,
+    );
     process.exit(0);
   });
-
-  setTimeout(() => {
-    console.log(`${colors.red}❌ Arrêt forcé${colors.reset}`);
-    process.exit(1);
-  }, 10000);
 };
 
 process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
 process.on("SIGINT", () => gracefulShutdown("SIGINT"));
-
-process.on("uncaughtException", (error) => {
-  console.log(
-    `${colors.red}❌ Exception non capturée:${colors.reset}`,
-    error.message,
-  );
-  gracefulShutdown("uncaughtException");
-});
-
-process.on("unhandledRejection", (reason) => {
-  console.log(
-    `${colors.red}❌ Rejection non gérée:${colors.reset}`,
-    reason?.message || reason,
-  );
-});
 
 if (require.main === module) {
   startServer();
