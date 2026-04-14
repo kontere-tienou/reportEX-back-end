@@ -30,6 +30,7 @@ module.exports = {
     origin: process.env.ALLOWED_ORIGINS?.split(",") || [
       "http://localhost:5173",
       "https://report-ex.vercel.app",
+      "https://reportex-back-end-production.up.railway.app",
     ],
     credentials: true,
   },
@@ -47,7 +48,6 @@ module.exports = {
     ],
   },
 
-  
   // Email
   email: {
     host: process.env.SMTP_HOST,
