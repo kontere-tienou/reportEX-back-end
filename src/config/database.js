@@ -1,9 +1,7 @@
-// src/config/database.js
 const { Pool } = require("pg");
 const dotenv = require("dotenv");
 const fs = require("fs");
 const path = require("path");
-
 const logger = require("../utils/logger");
 
 const colors = {
@@ -14,41 +12,35 @@ const colors = {
   cyan: "\x1b[36m",
 };
 
-// Chargement .env.local si existe
+// Load .env.local if it exists (local dev override)
 const envLocalPath = path.resolve(process.cwd(), ".env.local");
 if (fs.existsSync(envLocalPath)) {
   dotenv.config({ path: envLocalPath });
 }
 
-/* ==========================================
-  CONFIGURATION DYNAMIQUE (LOCAL / RAILWAY)
-  ==========================================
-*/
-
-const isRailway = process.env.RAILWAY_ENVIRONMENT || process.env.DATABASE_URL;
+const isRailway = !!(
+  process.env.RAILWAY_ENVIRONMENT || process.env.DATABASE_URL
+);
 
 const dbConfig = isRailway
   ? {
-      // Version Production (Railway)
       connectionString: process.env.DATABASE_URL,
-      ssl: {
-        rejectUnauthorized: false,
-      },
+      ssl: { rejectUnauthorized: false },
+      max: 10,
+      connectionTimeoutMillis: 10000,
+      idleTimeoutMillis: 30000,
     }
   : {
-      // Version Développement (Local)
       user: process.env.DB_USER || "postgres",
       password: process.env.DB_PASSWORD || "",
       host: process.env.DB_HOST || "localhost",
       port: parseInt(process.env.DB_PORT || "5432", 10),
       database: process.env.DB_NAME || "batex_reporting",
       ssl: false,
+      max: 10,
+      connectionTimeoutMillis: 10000,
+      idleTimeoutMillis: 30000,
     };
-
-
-// Options communes
-dbConfig.max = 10;
-dbConfig.connectionTimeoutMillis = 10000;
 
 console.log(
   isRailway
@@ -62,31 +54,28 @@ if (!isRailway) {
   );
 }
 
-// Création du pool
 const pool = new Pool(dbConfig);
 
-// Test de connexion immédiat
+// Test connection on startup
 (async () => {
   try {
     await pool.query("SELECT NOW()");
-    if (isRailway) {
-      console.log(
-        `${colors.green}✅ CLOUD DB : Connecté à Railway (Postgres)${colors.reset}`,
-      );
-    } else {
-      console.log(
-        `${colors.cyan}💻 LOCAL DB : Connecté à ${dbConfig.database} (localhost)${colors.reset}`,
-      );
-    }
+    console.log(
+      isRailway
+        ? `${colors.green}✅ CLOUD DB : Connecté à Railway (Postgres)${colors.reset}`
+        : `${colors.cyan}💻 LOCAL DB : Connecté à ${dbConfig.database} (localhost)${colors.reset}`,
+    );
   } catch (err) {
-    console.log(`${colors.red}❌ ERREUR DB : ${err.message}${colors.reset}`);
+    console.error(`${colors.red}❌ ERREUR DB : ${err.message}${colors.reset}`);
+    // Don't crash — let the app start, individual requests will fail gracefully
   }
 })();
 
-// Gestion des erreurs
 pool.on("error", (err) => {
-  console.log(`${colors.red}❌ Erreur pool DB : ${err.message}${colors.reset}`);
-  logger.error("❌ Erreur pool DB", { message: err.message });
+  console.error(
+    `${colors.red}❌ Erreur pool DB : ${err.message}${colors.reset}`,
+  );
+  logger.error("Pool DB error", { message: err.message });
 });
 
 module.exports = {
