@@ -35,7 +35,7 @@ const colors = {
  */
 
 // Désactiver Railway - Forcer le mode local
-const isRailway = false; // Toujours false pour forcer le mode local
+const isRailway = true; // Toujours false pour forcer le mode local
 process.env.PORT = process.env.PORT || "5008";
 
 const app = express();

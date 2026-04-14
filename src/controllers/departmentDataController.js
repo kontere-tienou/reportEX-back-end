@@ -62,8 +62,8 @@ const departmentDataController = {
           limit: limit ? parseInt(limit) : undefined,
           dateFrom,
           dateTo,
-          sortBy: sortBy || undefined, // Pass undefined if no sortBy
-          sortOrder: sortBy ? sortOrder : undefined, // Only include if sorting
+          sortBy: sortBy || undefined, 
+          sortOrder: sortBy ? sortOrder : undefined, 
         },
         filterUserId,
       );
