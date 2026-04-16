@@ -1,10 +1,7 @@
-// src/config/database.js
 const { Pool } = require("pg");
 const dotenv = require("dotenv");
 const fs = require("fs");
 const path = require("path");
-
-const logger = require("../utils/logger");
 
 const colors = {
   reset: "\x1b[0m",
@@ -13,60 +10,51 @@ const colors = {
   red: "\x1b[31m",
 };
 
-// Load .env.local if exists
-const envLocalPath = path.resolve(process.cwd(), ".env.local");
-if (fs.existsSync(envLocalPath)) {
-  dotenv.config({ path: envLocalPath });
-}
+// Chargement auto des variables
+const envPath = path.resolve(
+  process.cwd(),
+  fs.existsSync(".env.local") ? ".env.local" : ".env",
+);
+dotenv.config({ path: envPath });
 
-// === LOCAL DEVELOPMENT ONLY ===
-const dbConfig = {
-  user: process.env.DB_USER || "postgres",
-  password: process.env.DB_PASSWORD || "Admin123",
-  host: process.env.DB_HOST || "localhost",
-  port: parseInt(process.env.DB_PORT || "5432", 10),
-  database: process.env.DB_NAME || "reporting_batex-ci",
-  ssl: false,
-  max: 10,
+const isProduction = process.env.NODE_ENV === "production";
+
+// Configuration dynamique
+const dbConfig = isProduction
+  ? {
+      connectionString: process.env.DATABASE_URL,
+      ssl: { rejectUnauthorized: false },
+    }
+  : {
+      user: process.env.DB_USER || "postgres",
+      password: process.env.DB_PASSWORD || "Admin123",
+      host: process.env.DB_HOST || "localhost",
+      port: parseInt(process.env.DB_PORT || "5432", 10),
+      database: process.env.DB_NAME || "reporting_batex-ci",
+      ssl: false,
+    };
+
+const pool = new Pool({
+  ...dbConfig,
+  max: 15,
   connectionTimeoutMillis: 10000,
-};
+  idleTimeoutMillis: 30000,
+});
 
-console.log(
-  `${colors.cyan}💻 LOCAL MODE - Connecting to PostgreSQL${colors.reset}`,
-);
-console.log(
-  `${colors.cyan}📊 Database: ${dbConfig.database} on ${dbConfig.host}:${dbConfig.port}${colors.reset}`,
-);
-
-// Create pool
-const pool = new Pool(dbConfig);
-
-// Test connection
+// Test de connexion silencieux mais informatif
 (async () => {
   try {
-    await pool.query("SELECT NOW()");
+    await pool.query("SELECT 1");
     console.log(
-      `${colors.green}✅ LOCAL DB Connected successfully${colors.reset}`,
+      `${colors.green}✅ DB CONNECTÉE : ${isProduction ? "SUPABASE (PROD)" : "POSTGRES (LOCAL)"}${colors.reset}`,
     );
   } catch (err) {
-    console.log(
-      `${colors.red}❌ LOCAL DB Connection Failed: ${err.message}${colors.reset}`,
-    );
-    console.log("Make sure PostgreSQL is running and credentials are correct.");
+    console.error(`${colors.red}❌ ERREUR DB : ${err.message}${colors.reset}`);
   }
 })();
-
-pool.on("error", (err) => {
-  console.log(
-    `${colors.red}❌ Database Pool Error: ${err.message}${colors.reset}`,
-  );
-});
 
 module.exports = {
   query: (text, params) => pool.query(text, params),
   pool,
-  closePool: async () => {
-    await pool.end();
-    console.log("🔄 Database pool closed");
-  },
+  closePool: () => pool.end(),
 };

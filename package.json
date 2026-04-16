@@ -26,7 +26,8 @@
   "author": "BATEX-CI",
   "license": "MIT",
   "dependencies": {
-    "@supabase/supabase-js": "^2.98.0",
+    "@supabase/ssr": "^0.10.2",
+    "@supabase/supabase-js": "^2.103.2",
     "bcryptjs": "^2.4.3",
     "bull": "^4.16.5",
     "canvas": "^3.2.1",
