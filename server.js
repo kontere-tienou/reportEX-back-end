@@ -1,3 +1,4 @@
+// server.js - UPDATED CORS CONFIGURATION
 const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
@@ -7,10 +8,7 @@ const compression = require("compression");
 const cookieParser = require("cookie-parser");
 require("dotenv").config();
 
-const {
-  ALLOWED_ORIGINS,
-  server: serverConfig,
-} = require("./src/config/config");
+const config = require("./src/config/config");
 const { pool } = require("./src/config/database");
 const logger = require("./src/utils/logger");
 const configureRoutes = require("./src/routes");
@@ -18,170 +16,142 @@ const { requestLogger, requestId } = require("./src/middleware/requestLogger");
 const { generalLimiter } = require("./src/middleware/rateLimiter");
 const { notFound, errorHandler } = require("./src/middleware/errorHandler");
 
-const colors = {
-  reset: "\x1b[0m",
-  green: "\x1b[32m",
-  yellow: "\x1b[33m",
-  cyan: "\x1b[36m",
-  magenta: "\x1b[35m",
-  blue: "\x1b[34m",
-  pink: "\x1b[35m",
-};
-
-const isRailway = !!(
-  process.env.RAILWAY_ENVIRONMENT || process.env.DATABASE_URL
-);
-const PORT = process.env.PORT || serverConfig.port || 5008;
+/* ==========================================
+   DÉTECTION ENVIRONNEMENT
+========================================== */
+const isRailway = process.env.RAILWAY_ENVIRONMENT || process.env.DATABASE_URL;
+const PORT = process.env.PORT || config.server.port || 5008;
 
 const app = express();
 const server = http.createServer(app);
 
+// ========== UPDATED CORS CONFIGURATION ==========
+const allowedOrigins = [
+  "https://report-ex.vercel.app",
+  "https://reportex-back-end.up.railway.app",
+  "http://localhost:3000",
+  "http://localhost:5173",
+];
+
+// CORS options
+const corsOptions = {
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps, Postman, etc.)
+    if (!origin) return callback(null, true);
+
+    if (allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      console.log(`CORS blocked origin: ${origin}`);
+      callback(new Error("Not allowed by CORS"));
+    }
+  },
+  credentials: true,
+  optionsSuccessStatus: 200, // For legacy browser support
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+  allowedHeaders: [
+    "Content-Type",
+    "Authorization",
+    "X-Requested-With",
+    "Accept",
+    "Origin",
+  ],
+  exposedHeaders: ["Authorization"],
+};
+// Add this BEFORE your CORS middleware in server.js
+app.use((req, res, next) => {
+  console.log(`[${req.method}] ${req.url}`);
+  console.log('Origin:', req.headers.origin);
+  console.log('Headers:', req.headers);
+  next();
+});
+
+// Apply CORS middleware
+app.use(cors(corsOptions));
+
+// Handle preflight requests explicitly
+app.options("*", cors(corsOptions));
+
+// Socket.IO with CORS
 const io = new Server(server, {
   cors: {
-    origin: ALLOWED_ORIGINS,
+    origin: allowedOrigins,
     credentials: true,
-    methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+    methods: ["GET", "POST"],
   },
 });
 
 app.set("io", io);
 app.set("trust proxy", isRailway ? 1 : false);
 
-/* ══════════════════════════════════════════
-   1. CORS — must be absolutely first
-   ══════════════════════════════════════════ */
-
-// Layer 1: raw headers (catches everything including edge cases)
-app.use((req, res, next) => {
-  const origin = req.headers.origin;
-  if (ALLOWED_ORIGINS.includes(origin)) {
-    res.setHeader("Access-Control-Allow-Origin", origin);
-  }
-  res.setHeader("Access-Control-Allow-Credentials", "true");
-  res.setHeader(
-    "Access-Control-Allow-Methods",
-    "GET,POST,PUT,PATCH,DELETE,OPTIONS",
-  );
-  res.setHeader(
-    "Access-Control-Allow-Headers",
-    "Origin,X-Requested-With,Content-Type,Accept,Authorization",
-  );
-  if (req.method === "OPTIONS") return res.sendStatus(200);
-  next();
-});
-
-// Layer 2: cors() package
-app.use(
-  cors({
-    origin: (origin, cb) => {
-      if (!origin || ALLOWED_ORIGINS.includes(origin)) return cb(null, true);
-      cb(new Error(`CORS blocked: ${origin}`));
-    },
-    credentials: true,
-    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allowedHeaders: [
-      "Origin",
-      "X-Requested-With",
-      "Content-Type",
-      "Accept",
-      "Authorization",
-    ],
-  }),
-);
-
-// Explicit preflight catch-all
-app.options("*", (req, res) => res.sendStatus(200));
-
-/* ══════════════════════════════════════════
-   2. Security & core middlewares
-   ══════════════════════════════════════════ */
+/* ==========================================
+   MIDDLEWARES
+========================================== */
 app.use(
   helmet({
     contentSecurityPolicy: false,
-    crossOriginResourcePolicy: false, // critical — prevents helmet blocking cross-origin responses
+    crossOriginResourcePolicy: { policy: "cross-origin" },
   }),
 );
 app.use(compression());
 app.use(express.json({ limit: "10mb" }));
-app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 app.use(cookieParser());
 app.use(requestId);
 app.use(generalLimiter);
 app.use("/uploads", express.static("uploads"));
 
-if (serverConfig.env !== "test") app.use(requestLogger);
+// Add a test CORS route
+app.get("/test-cors", (req, res) => {
+  res.json({ message: "CORS is working!", origin: req.headers.origin });
+});
 
-/* ══════════════════════════════════════════
-   3. Health check (before all routes)
-   ══════════════════════════════════════════ */
+if (config.server.env !== "test") {
+  app.use(requestLogger);
+}
+
+/* ==========================================
+   HEALTH CHECK
+========================================== */
 app.get("/health", async (req, res) => {
   try {
     await pool.query("SELECT 1");
     res.json({
       status: "healthy",
-      env: serverConfig.env,
       mode: isRailway ? "RAILWAY" : "LOCAL",
-      port: PORT,
-      allowed_origins: ALLOWED_ORIGINS,
-      timestamp: new Date().toISOString(),
     });
   } catch (e) {
-    res.status(503).json({ status: "unhealthy", error: e.message });
+    res.status(503).json({ status: "unhealthy" });
   }
 });
 
-/* ══════════════════════════════════════════
-   4. API routes
-   ══════════════════════════════════════════ */
+/* ==========================================
+   ROUTES
+========================================== */
 configureRoutes(app);
 
-/* ══════════════════════════════════════════
-   5. Error handlers — always last
-   ══════════════════════════════════════════ */
+/* ==========================================
+   ERROR HANDLING
+========================================== */
 app.use(notFound);
 app.use(errorHandler);
 
-/* ══════════════════════════════════════════
-   6. Start
-   ══════════════════════════════════════════ */
-const startServer = () => {
+/* ==========================================
+   START SERVER
+========================================== */
+const startServer = async () => {
   const modeLabel = isRailway ? "PRODUCTION / RAILWAY" : "LOCAL";
 
   server.listen(PORT, () => {
-    console.log(
-      `\n${colors.pink}╔══════════════════════════════════════════╗${colors.reset}`,
-    );
-    console.log(
-      `${colors.pink}║    🏠 MODE ${modeLabel.padEnd(19)} ║${colors.reset}`,
-    );
-    console.log(
-      `${colors.pink}╚══════════════════════════════════════════╝${colors.reset}`,
-    );
-    console.log(
-      `${colors.pink}|═══════════════════════════════════════════${colors.reset}`,
-    );
-    console.log(`${colors.green}| 🚀 SERVEUR BATEX DÉMARRÉ${colors.reset}`);
-    console.log(
-      `${colors.pink}|═══════════════════════════════════════════${colors.reset}`,
-    );
-    console.log(`${colors.cyan}| 📍 Environnement : ${modeLabel}`);
-    console.log(`${colors.magenta}| 🔌 Port         : ${PORT}`);
-    console.log(`${colors.cyan}| 🔒 CORS origins :`);
-    ALLOWED_ORIGINS.forEach((o) =>
-      console.log(`${colors.cyan}|    • ${o}${colors.reset}`),
-    );
+    console.log(`🚀 Server running in ${modeLabel}`);
+    console.log(`📍 Port: ${PORT}`);
+
     if (isRailway) {
       console.log(
-        `${colors.blue}| 🌍 URL          : https://${process.env.RAILWAY_STATIC_URL || "railway.app"}${colors.reset}`,
+        `🌍 Cloud URL: ${process.env.RAILWAY_STATIC_URL || "Active"}`,
       );
     } else {
-      console.log(
-        `${colors.yellow}| 🌐 Local        : http://localhost:${PORT}${colors.reset}`,
-      );
+      console.log(`🌐 Local: http://localhost:${PORT}`);
     }
-    console.log(
-      `${colors.pink}|═══════════════════════════════════════════${colors.reset}\n`,
-    );
   });
 };
 
